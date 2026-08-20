@@ -1,14 +1,27 @@
-import os
+import logging
 import requests
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+import os
 
-TELEGRAM_TOKEN = "8950574142:AAEfyRo3YEpfmcJvual-YtabONsp7kJnz8w"
-BITE_STORE_API_KEY = "bsk_wAcyzJdgjXGJL9S3VAd-9UQ92g7IGDu_zwF7_tDo1og"
+# ============================================================
+# LOGGING
+# ============================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+logger = logging.getLogger("fastmedia_bot")
+
+# ============================================================
+# CONFIG (من Environment Variables)
+# ============================================================
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+BITE_STORE_API_KEY = os.getenv("BITE_STORE_API_KEY")
 BASE_URL = "https://bite-store-bot-production.up.railway.app"
 
 USD_TO_EGP = 53.0
-PROFIT_MARGIN = 2.0  # زيادة 100% قطاعي
+PROFIT_MARGIN = 2.0
 
 HEADERS = {
     "X-API-Key": BITE_STORE_API_KEY,
@@ -22,11 +35,12 @@ PAYMENT_INFO = (
     "⚠️ بعد التحويل اضغط على زر *تأكيد الدفع واستلام الطلب* بالأسفل."
 )
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⏳ جاري جلب المنتجات والأسعار...")
     
     try:
-        res = requests.get(f"{BASE_URL}/v1/products", headers=HEADERS, timeout=10)
+        res = requests.get(f"{BASE_URL}/v1/products", headers=HEADERS, timeout=12)
         if res.status_code == 200:
             data = res.json()
             products = data if isinstance(data, list) else data.get("products", [])
@@ -45,13 +59,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if keyboard:
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                await update.message.reply_text("🛒 *اختر المنتج المطلوب للشراء:*", reply_markup=reply_markup, parse_mode="Markdown")
+                await update.message.reply_text(
+                    "🛒 *اختر المنتج المطلوب للشراء:*",
+                    reply_markup=reply_markup,
+                    parse_mode="Markdown"
+                )
             else:
                 await update.message.reply_text("⚠️ لا توجد منتجات متوفرة حالياً.")
         else:
             await update.message.reply_text("❌ تعذر الاتصال بالمتجر، يرجى المحاولة لاحقاً.")
     except Exception:
+        logger.exception("Error in /start")
         await update.message.reply_text("❌ حدث خطأ أثناء الاتصال بالخادم.")
+
 
 async def select_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -72,6 +92,7 @@ async def select_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
+
 async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -80,30 +101,60 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("⏳ جاري تنفيذ الطلب وسحب البيانات فوراً...")
 
     try:
-        payload = {"product_id": int(prod_id) if prod_id.isdigit() else prod_id}
+        payload = {"product_id": int(prod_id) if str(prod_id).isdigit() else prod_id}
         res = requests.post(f"{BASE_URL}/v1/orders", json=payload, headers=HEADERS, timeout=15)
         
         if res.status_code == 200:
             order_data = res.json()
-            delivered_key = order_data.get("delivered_data") or order_data.get("key") or order_data.get("item") or "تم تنفيذ طلبك بنجاح!"
-            await query.message.reply_text(f"🎉 *تم استلام طلبك بنجاح!*\n\n📋 *البيانات/الكود:*\n`{delivered_key}`", parse_mode="Markdown")
+            delivered_key = (
+                order_data.get("delivered_data")
+                or order_data.get("key")
+                or order_data.get("item")
+                or "تم تنفيذ طلبك بنجاح!"
+            )
+            await query.message.reply_text(
+                f"🎉 *تم استلام طلبك بنجاح!*\n\n📋 *البيانات/الكود:*\n`{delivered_key}`",
+                parse_mode="Markdown"
+            )
         else:
             await query.message.reply_text("❌ تعذر الشراء (تأكد من شحن رصيد المحفظة بالمتجر أو توفر الكمية).")
     except Exception:
+        logger.exception("Error in buy_product")
         await query.message.reply_text("❌ حدث خطأ في الاتصال بالخادم أثناء إتمام الطلب.")
+
 
 async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await start(query, context)
+    await start(update, context)  # هنعدلها تحت
+
+
+async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    # نرسل رسالة جديدة
+    class FakeUpdate:
+        def __init__(self, message):
+            self.message = message
+    await start(FakeUpdate(query.message), context)
+
 
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(select_product, pattern="^sel_"))
-    app.add_handler(CallbackQueryHandler(buy_product, pattern="^buy_"))
-    app.add_handler(CallbackQueryHandler(back_to_start, pattern="^back$"))
-    app.run_polling()
+    if not TELEGRAM_TOKEN or not BITE_STORE_API_KEY:
+        logger.error("TELEGRAM_TOKEN or BITE_STORE_API_KEY is missing!")
+        return
+
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(select_product, pattern=r"^sel_"))
+    application.add_handler(CallbackQueryHandler(buy_product, pattern=r"^buy_"))
+    application.add_handler(CallbackQueryHandler(back_to_start, pattern=r"^back$"))
+
+    logger.info("Starting bot...")
+    application.run_polling(drop_pending_updates=True)
+    logger.info("Bot stopped.")
+
 
 if __name__ == "__main__":
     main()
