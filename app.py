@@ -300,7 +300,6 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     try:
         prod_id = int(query.data.split(":")[-1])
-        # جلب المنتج من الكاش بدل طلب /v1/products/{id}
         product = next(
             (p for p in products_cache if int(p.get("id", -1)) == prod_id), None
         )
@@ -1105,7 +1104,6 @@ async def manage_price_product(update, context):
     try:
         prod_id = int(query.data.split("_")[-1])
 
-        # جلب قائمة المنتجات التي تعمل بالفعل
         res = requests.get(
             f"{BASE_URL}/v1/products",
             headers=HEADERS,
@@ -1127,25 +1125,44 @@ async def manage_price_product(update, context):
         )
 
         if not product:
-            await query.message.reply_text(
-                "❌ المنتج غير موجود."
-            )
+            await query.message.reply_text("❌ المنتج غير موجود.")
             return
 
-        # نحتفظ بالسعر الأصلي بالدولار
         price_usd = float(
             product.get("price_usd")
             or product.get("price")
             or 0
         )
 
-        # لا نغيّر نظام التسعير الحالي
+        # التسعير التلقائي الحالي — لا يتغير
         price_egp = price_usd * 2.00 * 53.00
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✏️ تعديل السعر",
+                    callback_data=f"editprice_{prod_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔄 استخدام السعر التلقائي",
+                    callback_data=f"autoprice_{prod_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⬅️ رجوع",
+                    callback_data="admin_prices"
+                )
+            ]
+        ]
 
         await query.message.reply_text(
             f"📦 {product.get('name', 'بدون اسم')}\n\n"
             f"💵 السعر الأساسي: ${price_usd:.2f}\n"
-            f"💰 سعر البيع: {price_egp:.2f} جنيه"
+            f"💰 سعر البيع: {price_egp:.2f} جنيه",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
     except Exception:
@@ -1177,11 +1194,7 @@ async def edit_manual_price(
 
     await query.answer()
 
-    prod_id = query.data.replace(
-        "editmanual_",
-        "",
-        1
-    )
+    prod_id = query.data.split("_")[-1]
 
     context.user_data[
         "editing_price"
@@ -1221,11 +1234,7 @@ async def reset_manual_price(
         "✅ تم إرجاع السعر التلقائي"
     )
 
-    prod_id = query.data.replace(
-        "resetmanual_",
-        "",
-        1
-    )
+    prod_id = query.data.split("_")[-1]
 
     manual_prices.pop(
         prod_id,
@@ -1234,88 +1243,10 @@ async def reset_manual_price(
 
     save_manual_prices()
 
-    try:
-
-        res = requests.get(
-            f"{BASE_URL}/v1/products/{prod_id}",
-            headers=HEADERS,
-            timeout=10
-        )
-
-        if res.status_code != 200:
-
-            await query.edit_message_text(
-                "✅ تم إلغاء السعر اليدوي.\n"
-                "🔄 المنتج الآن يستخدم السعر التلقائي."
-            )
-
-            return
-
-        p_data = res.json()
-
-        name = p_data.get(
-            "name",
-            "منتج"
-        )
-
-        price_usd = float(
-            p_data.get(
-                "price",
-                0
-            )
-        )
-
-        automatic_price = calculate_automatic_price(
-            price_usd
-        )
-
-        text = (
-            "⚙️ *إدارة سعر المنتج*\n\n"
-            f"📦 *المنتج:* {name}\n"
-            f"🆔 Product ID: `{prod_id}`\n\n"
-            f"💵 سعر API: `${price_usd}`\n"
-            f"🔄 السعر بالمعادلة: "
-            f"*{automatic_price} جنيه*\n"
-            f"💰 السعر الحالي: "
-            f"*{automatic_price} جنيه*\n"
-            f"📌 الوضع: *🔄 سعر تلقائي*\n\n"
-            "اختر الإجراء:"
-        )
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "✏️ تعديل السعر",
-                    callback_data=f"editmanual_{prod_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔄 استخدام السعر التلقائي",
-                    callback_data=f"resetmanual_{prod_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 رجوع",
-                    callback_data="prices_back"
-                )
-            ]
-        ]
-
-        await query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            ),
-            parse_mode="Markdown"
-        )
-
-    except Exception:
-
-        logger.exception(
-            "Error in reset_manual_price"
-        )
+    await query.message.reply_text(
+        "✅ تم إلغاء السعر اليدوي بنجاح.\n"
+        "🔄 المنتج الآن يستخدم السعر التلقائي بالمعادلة."
+    )
 
 
 # ============================================================
@@ -1562,21 +1493,21 @@ def main():
     application.add_handler(
         CallbackQueryHandler(
             edit_manual_price,
-            pattern=r"^editmanual_"
+            pattern=r"^(editmanual_|editprice_)"
         )
     )
 
     application.add_handler(
         CallbackQueryHandler(
             reset_manual_price,
-            pattern=r"^resetmanual_"
+            pattern=r"^(resetmanual_|autoprice_)"
         )
     )
 
     application.add_handler(
         CallbackQueryHandler(
             prices_back,
-            pattern=r"^prices_back$"
+            pattern=r"^(prices_back|admin_prices)$"
         )
     )
 
