@@ -295,171 +295,36 @@ async def start(
 # VIEW PRODUCT
 # ============================================================
 
-async def view_product(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-
     await query.answer()
-
-    prod_id = query.data.split(
-        "_",
-        1
-    )[1]
-
-    cached = products_cache.get(
-        prod_id,
-        {}
-    )
-
-    name = cached.get(
-        "name",
-        "منتج رقمي"
-    )
-
-    price_egp = cached.get(
-        "price_egp",
-        0
-    )
-
-    stock_count = cached.get(
-        "stock",
-        1
-    )
-
-    price_usd = cached.get(
-        "price_usd",
-        0
-    )
-
-    description = (
-        "تسليم فوري وبيانات رسمية ومضمونة بأعلى جودة."
-    )
-
-    delivery_type = "توصيل تلقائي 🤖"
-
-    format_type = "بيانات مباشرة 📎"
-
-    sold_count = "0"
-
     try:
-
-        res = requests.get(
-            f"{BASE_URL}/v1/products/{prod_id}",
-            headers=HEADERS,
-            timeout=10
+        prod_id = int(query.data.split(":")[-1])
+        # جلب المنتج من الكاش بدل طلب /v1/products/{id}
+        product = next(
+            (p for p in products_cache if int(p.get("id", -1)) == prod_id), None
         )
-
-        if res.status_code == 200:
-
-            p_data = res.json()
-
-            description = (
-                p_data.get("description")
-                or p_data.get("desc")
-                or description
+        if not product:
+            await query.message.reply_text(
+                "❌ تعذر العثور على المنتج."
             )
-
-            delivery_type = (
-                p_data.get("delivery_type")
-                or p_data.get("type")
-                or delivery_type
-            )
-
-            format_type = (
-                p_data.get("format")
-                or format_type
-            )
-
-            sold_count = str(
-                p_data.get(
-                    "sold",
-                    p_data.get(
-                        "sold_count",
-                        "0"
-                    )
-                )
-            )
-
-            stock_count = p_data.get(
-                "stock",
-                stock_count
-            )
-
-            name = p_data.get(
-                "name",
-                name
-            )
-
-            price_usd = float(
-                p_data.get(
-                    "price",
-                    price_usd
-                )
-            )
-
-            price_egp = get_product_price(
-                prod_id,
-                price_usd
-            )
-
-    except Exception:
-
-        logger.exception(
-            "Error loading product details"
+            return
+        name = product.get("name", "بدون اسم")
+        description = product.get("description", "")
+        price = product.get("price", 0)
+        text = (
+            f"📦 <b>{name}</b>\n\n"
+            f"{description}\n\n"
+            f"💰 السعر: {price}"
         )
-
-    products_cache[prod_id] = {
-        "name": name,
-        "price_egp": price_egp,
-        "price_usd": price_usd,
-        "stock": stock_count,
-        "desc": description
-    }
-
-    card_text = (
-        f"📦 *{name}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📝 {description}\n\n"
-        f"💰 *السعر:* *{price_egp} جنيه مصري*\n"
-        f"🚦 *الحالة:* ✅ متوفر للتسليم الفوري\n"
-        f"📦 *نوع التسليم:* {delivery_type}\n"
-        f"🧩 *طريقة الاستلام:* {format_type}\n"
-        f"📊 *المتوفر بالمخزون:* {stock_count}\n"
-        f"🔥 *عدد مرات البيع:* {sold_count}\n"
-        f"━━━━━━━━━━━━━━━━━━━━"
-    )
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "🛍️ شراء الآن | Buy Now",
-                callback_data=f"buy_{prod_id}"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🎧 استفسار / الدعم الفني",
-                callback_data="contact_support"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "🔙 رجوع للقائمة",
-                callback_data="back"
-            )
-        ]
-    ]
-
-    await query.edit_message_text(
-        card_text,
-        reply_markup=InlineKeyboardMarkup(
-            keyboard
-        ),
-        parse_mode="Markdown"
-    )
+        await query.message.reply_text(
+            text, parse_mode="HTML"
+        )
+    except Exception as e:
+        logger.exception("Error viewing product")
+        await query.message.reply_text(
+            "❌ حدث خطأ أثناء جلب المنتج."
+        )
 
 
 # ============================================================
