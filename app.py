@@ -28,8 +28,9 @@ BITE_STORE_API_KEY = os.getenv("BITE_STORE_API_KEY")
 BASE_URL = "https://bite-store-bot-production.up.railway.app"
 
 ADMIN_ID = 8079213467
-# يمكنك تغيير يوزر الدعم الفني هنا إذا أردت
-SUPPORT_USERNAME = "Fastmedia1_bot"
+
+# ⚠️ اكتب هنا يوزر حسابك الشخصي في تليجرام بدون علامة @
+SUPPORT_USERNAME = "YOUR_TELEGRAM_USERNAME"
 
 USD_TO_EGP = 53.0
 PROFIT_MARGIN = 2.0
