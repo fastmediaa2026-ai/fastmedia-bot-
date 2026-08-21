@@ -1098,134 +1098,60 @@ async def send_price_panel(
 # OPEN PRICE PRODUCT
 # ============================================================
 
-async def manage_price_product(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def manage_price_product(update, context):
     query = update.callback_query
-
-    if query.from_user.id != ADMIN_ID:
-
-        await query.answer(
-            "غير مصرح لك",
-            show_alert=True
-        )
-
-        return
-
     await query.answer()
 
-    prod_id = query.data.replace(
-        "manageprice_",
-        "",
-        1
-    )
-
-    logger.info(
-        "Admin opened price manager | product_id=%s",
-        prod_id
-    )
-
     try:
+        prod_id = int(query.data.split(":")[-1])
 
+        # جلب قائمة المنتجات التي تعمل بالفعل
         res = requests.get(
-            f"{BASE_URL}/v1/products/{prod_id}",
+            f"{BASE_URL}/v1/products",
             headers=HEADERS,
             timeout=10
         )
 
         if res.status_code != 200:
-
             await query.message.reply_text(
-                f"❌ تعذر جلب المنتج.\n"
-                f"HTTP {res.status_code}"
+                f"❌ تعذر جلب المنتجات.\nHTTP {res.status_code}"
             )
-
             return
 
-        p_data = res.json()
+        data = res.json()
+        products = data.get("products", data) if isinstance(data, dict) else data
 
-        name = p_data.get(
-            "name",
-            "منتج"
+        product = next(
+            (p for p in products if int(p.get("id", -1)) == prod_id),
+            None
         )
 
-        price_usd = float(
-            p_data.get(
-                "price",
-                0
+        if not product:
+            await query.message.reply_text(
+                "❌ المنتج غير موجود."
             )
+            return
+
+        # نحتفظ بالسعر الأصلي بالدولار
+        price_usd = float(
+            product.get("price_usd")
+            or product.get("price")
+            or 0
         )
 
-        automatic_price = calculate_automatic_price(
-            price_usd
-        )
+        # لا نغيّر نظام التسعير الحالي
+        price_egp = price_usd * 2.00 * 53.00
 
-        if prod_id in manual_prices:
-
-            current_price = manual_prices[
-                prod_id
-            ]
-
-            mode = "✏️ سعر يدوي"
-
-        else:
-
-            current_price = automatic_price
-
-            mode = "🔄 سعر تلقائي"
-
-        text = (
-            "⚙️ *إدارة سعر المنتج*\n\n"
-            f"📦 *المنتج:* {name}\n"
-            f"🆔 Product ID: `{prod_id}`\n\n"
-            f"💵 سعر API: `${price_usd}`\n"
-            f"🔄 السعر بالمعادلة: "
-            f"*{automatic_price} جنيه*\n"
-            f"💰 السعر الحالي: "
-            f"*{current_price} جنيه*\n"
-            f"📌 الوضع: *{mode}*\n\n"
-            "اختر الإجراء:"
-        )
-
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "✏️ تعديل السعر",
-                    callback_data=f"editmanual_{prod_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔄 استخدام السعر التلقائي",
-                    callback_data=f"resetmanual_{prod_id}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔙 رجوع",
-                    callback_data="prices_back"
-                )
-            ]
-        ]
-
-        await query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(
-                keyboard
-            ),
-            parse_mode="Markdown"
+        await query.message.reply_text(
+            f"📦 {product.get('name', 'بدون اسم')}\n\n"
+            f"💵 السعر الأساسي: ${price_usd:.2f}\n"
+            f"💰 سعر البيع: {price_egp:.2f} جنيه"
         )
 
     except Exception:
-
-        logger.exception(
-            "Error in manage_price_product"
-        )
-
+        logger.exception("Error opening price manager")
         await query.message.reply_text(
-            "❌ حدث خطأ أثناء فتح إعدادات السعر."
+            "❌ حدث خطأ أثناء جلب المنتج."
         )
 
 
