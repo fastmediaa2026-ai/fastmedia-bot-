@@ -71,7 +71,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     products_cache[prod_id] = {
                         "name": name,
                         "price_egp": price_egp,
-                        "price_usd": price_usd,
                         "stock": stock
                     }
                     short_name = name[:28] + "..." if len(name) > 28 else name
@@ -91,7 +90,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await status_msg.edit_text(
                     "🛍️ *أهلاً بك في متجر Fastmedia Store*\n\n"
-                    "اختر المنتج المطلوب لعرض بطاقة المواصفات والتفاصيل 👇",
+                    "اختر المنتج المطلوب لعرض التفاصيل والمواصفات 👇",
                     reply_markup=reply_markup,
                     parse_mode="Markdown"
                 )
@@ -111,15 +110,13 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prod_id = query.data.split("_")[1]
     cached = products_cache.get(prod_id, {})
 
-    # محاولة سحب التفاصيل الكاملة للمنتج مباشرة من الـ API
-    description = "تسليم فوري وبيانات رسمية ومضمونة."
+    name = cached.get("name", "منتج رقمي")
+    price_egp = cached.get("price_egp", 0)
+    stock_count = cached.get("stock", 1)
+    description = "تسليم فوري وبيانات رسمية ومضمونة بأعلى جودة."
     delivery_type = "توصيل تلقائي 🤖"
     format_type = "بيانات مباشرة 📎"
     sold_count = "0"
-    stock_count = cached.get("stock", 1)
-    name = cached.get("name", "منتج")
-    price_egp = cached.get("price_egp", 0)
-    price_usd = cached.get("price_usd", 0)
 
     try:
         res = requests.get(f"{BASE_URL}/v1/products/{prod_id}", headers=HEADERS, timeout=10)
@@ -137,28 +134,29 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    # تحديث الكاش بالبيانات الأحدث
     products_cache[prod_id] = {
         "name": name,
         "price_egp": price_egp,
-        "price_usd": price_usd,
         "stock": stock_count,
         "desc": description
     }
 
-    # تصميم كارت المنتج بنفس شكل المتجر الأصلي
+    # تصميم الكارت باسم المنتج وسعرك بالجنيه فقط
     card_text = (
+        f"📦 *{name}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📝 {description}\n\n"
-        f"💰 *Price:* ${price_usd} ≈ *{price_egp} ج.م*\n"
-        f"🚦 *Status:* ✅ نشط\n"
-        f"📦 *Delivery Type:* {delivery_type}\n"
-        f"🧩 *Format:* {format_type}\n"
-        f"📊 *In Stock:* {stock_count}\n"
-        f"🔥 *Sold:* {sold_count}"
+        f"💰 *السعر:* *{price_egp} جنيه مصري*\n"
+        f"🚦 *الحالة:* ✅ متوفر للتسليم الفوري\n"
+        f"📦 *نوع التسليم:* {delivery_type}\n"
+        f"🧩 *طريقة الاستلام:* {format_type}\n"
+        f"📊 *المتوفر بالمخزون:* {stock_count}\n"
+        f"🔥 *عدد مرات البيع:* {sold_count}\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
     )
 
     keyboard = [
-        [InlineKeyboardButton("🛍️ Buy Now | شراء الآن", callback_data=f"buy_{prod_id}")],
+        [InlineKeyboardButton("🛍️ شراء الآن | Buy Now", callback_data=f"buy_{prod_id}")],
         [InlineKeyboardButton("🎧 استفسار / الدعم الفني", callback_data="contact_support")],
         [InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back")]
     ]
@@ -193,7 +191,7 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     keyboard = [
         [InlineKeyboardButton("📤 لقد قمت بالتحويل - إرسال الإيصال", callback_data="send_receipt")],
-        [InlineKeyboardButton("🔙 رجوع لبطاقة المنتج", callback_data=f"view_{prod_id}")]
+        [InlineKeyboardButton("🔙 رجوع لتفاصيل المنتج", callback_data=f"view_{prod_id}")]
     ]
     await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
@@ -222,7 +220,7 @@ async def request_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_support_msg"] = True
     await query.edit_message_text(
         "✍️ *أهلاً بك في الدعم الفني!*\n\n"
-        "اكتب رسالتك أو استفسارك هنا، وسيتم إرسالها للإدارة للرد عليك مباشرة في نفس الشات.",
+        "اكتب رسالتك أو استفسارك هنا في الشات، وسيتم إرسالها للإدارة للرد عليك مباشرة.",
         parse_mode="Markdown"
     )
 
@@ -448,7 +446,7 @@ def main():
     application.add_handler(MessageHandler(filters.PHOTO, handle_receipt))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text))
 
-    logger.info("Starting bot with product card UI and live support...")
+    logger.info("Starting bot with perfected product card and live support...")
     application.run_polling(drop_pending_updates=True)
 
 
