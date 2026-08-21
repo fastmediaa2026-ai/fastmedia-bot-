@@ -29,9 +29,6 @@ BASE_URL = "https://bite-store-bot-production.up.railway.app"
 
 ADMIN_ID = 8079213467
 
-# رابط واتساب مباشر وشات تليجرام شخصي مباشر
-SUPPORT_URL = "https://wa.me/201559740555"
-
 USD_TO_EGP = 53.0
 PROFIT_MARGIN = 2.0
 
@@ -47,9 +44,7 @@ PAYMENT_INFO = (
     "⚠️ بعد التحويل اضغط على زر إرسال الإيصال بالأسفل وأرسل صورة التحويل."
 )
 
-# تخزين الطلبات المؤقتة
 pending_orders = {}
-# تخزين بيانات المنتجات كاملة (prod_id -> dict)
 products_cache = {}
 
 
@@ -91,9 +86,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                     ])
 
-            # زر الدعم الفني المباشر
+            # زر الدعم الفني الداخلي
             keyboard.append([
-                InlineKeyboardButton("🎧 الدعم الفني والمساعدة", url=SUPPORT_URL)
+                InlineKeyboardButton("🎧 تواصل مع الدعم الفني", callback_data="contact_support")
             ])
 
             if len(keyboard) > 1:
@@ -138,7 +133,7 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("🛍️ شراء الآن", callback_data=f"buy_{prod_id}")],
-        [InlineKeyboardButton("🎧 استفسار / الدعم الفني", url=SUPPORT_URL)],
+        [InlineKeyboardButton("🎧 استفسار / الدعم الفني", callback_data="contact_support")],
         [InlineKeyboardButton("🔙 رجوع لقائمة المنتجات", callback_data="back")]
     ]
 
@@ -192,6 +187,73 @@ async def ask_for_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     context.user_data["waiting_receipt"] = True
+
+
+async def request_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    context.user_data["waiting_support_msg"] = True
+    await query.edit_message_text(
+        "✍️ *أهلاً بك في الدعم الفني!*\n\n"
+        "يرجى كتابة رسالتك أو استفسارك هنا في رسالة نصية، وسيتم تحويلها للإدارة والرد عليك مباشرة.",
+        parse_mode="Markdown"
+    )
+
+
+async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = update.message.text
+
+    # إذا كان الأدمن يقوم بالرد على عميل
+    if user_id == ADMIN_ID and context.user_data.get("replying_to_user"):
+        target_client_id = context.user_data.pop("replying_to_user")
+        try:
+            await context.bot.send_message(
+                chat_id=target_client_id,
+                text=f"💬 *رد الدعم الفني:*\n\n{text}",
+                parse_mode="Markdown"
+            )
+            await update.message.reply_text("✅ تم إرسال ردك إلى العميل بنجاح.")
+        except Exception:
+            await update.message.reply_text("❌ تعذر إرسال الرد، ربما قام العميل بحظر البوت.")
+        return
+
+    # إذا كان العميل يرسل رسالة للدعم
+    if context.user_data.get("waiting_support_msg"):
+        context.user_data["waiting_support_msg"] = False
+        username = update.effective_user.username or update.effective_user.first_name
+
+        admin_msg = (
+            f"📩 *رسالة دعم فني جديدة*\n\n"
+            f"👤 العميل: @{username} (`{user_id}`)\n"
+            f"💬 نص الرسالة:\n{text}"
+        )
+        reply_btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton("↩️ الرد على العميل", callback_data=f"reply_to_{user_id}")]
+        ])
+
+        await context.bot.send_message(
+            chat_id=ADMIN_ID,
+            text=admin_msg,
+            reply_markup=reply_btn,
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text("✅ تم إرسال رسالتك إلى الدعم الفني، وسيتم الرد عليك في أقرب وقت.")
+
+
+async def start_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if query.from_user.id != ADMIN_ID:
+        await query.answer("غير مصرح لك", show_alert=True)
+        return
+
+    client_id = int(query.data.split("_")[2])
+    context.user_data["replying_to_user"] = client_id
+
+    await query.message.reply_text(f"✍️ اكتب الآن نص الرد الذي تريد إرساله للعميل `{client_id}`:")
 
 
 async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -272,7 +334,7 @@ async def approve_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             support_btn = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", url=SUPPORT_URL)]
+                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", callback_data="contact_support")]
             ])
 
             await context.bot.send_message(
@@ -292,7 +354,7 @@ async def approve_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             support_btn = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", url=SUPPORT_URL)]
+                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", callback_data="contact_support")]
             ])
             await context.bot.send_message(
                 chat_id=user_id,
@@ -323,7 +385,7 @@ async def reject_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending_orders.pop(user_id)
 
     support_btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎧 تواصل مع الإدارة", url=SUPPORT_URL)]
+        [InlineKeyboardButton("🎧 تواصل مع الإدارة", callback_data="contact_support")]
     ])
 
     await context.bot.send_message(
@@ -352,12 +414,15 @@ def main():
     application.add_handler(CallbackQueryHandler(view_product, pattern=r"^view_"))
     application.add_handler(CallbackQueryHandler(buy_product, pattern=r"^buy_"))
     application.add_handler(CallbackQueryHandler(ask_for_receipt, pattern=r"^send_receipt$"))
+    application.add_handler(CallbackQueryHandler(request_support, pattern=r"^contact_support$"))
+    application.add_handler(CallbackQueryHandler(start_admin_reply, pattern=r"^reply_to_"))
     application.add_handler(CallbackQueryHandler(approve_order, pattern=r"^approve_"))
     application.add_handler(CallbackQueryHandler(reject_order, pattern=r"^reject_"))
     application.add_handler(CallbackQueryHandler(back_to_start, pattern=r"^back$"))
     application.add_handler(MessageHandler(filters.PHOTO, handle_receipt))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text))
 
-    logger.info("Starting bot with manual approval system...")
+    logger.info("Starting bot with integrated live support system...")
     application.run_polling(drop_pending_updates=True)
 
 
