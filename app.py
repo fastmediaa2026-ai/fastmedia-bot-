@@ -299,25 +299,50 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     try:
-        prod_id = int(query.data.split("_")[-1])
-        product = next(
-            (p for p in products_cache if int(p.get("id", -1)) == prod_id), None
-        )
+        prod_id = str(query.data.split("_")[-1])
+        product = products_cache.get(prod_id)
+
         if not product:
             await query.message.reply_text(
                 "❌ تعذر العثور على المنتج."
             )
             return
+
         name = product.get("name", "بدون اسم")
-        description = product.get("description", "")
-        price = product.get("price", 0)
+        price_egp = product.get("price_egp", 0)
+        stock = product.get("stock", 0)
+
         text = (
             f"📦 <b>{name}</b>\n\n"
-            f"{description}\n\n"
-            f"💰 السعر: {price}"
+            f"💰 السعر: <b>{price_egp} جنيه</b>\n"
+            f"📊 المتوفر بالمخزون: <b>{stock}</b>"
         )
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "🛍️ شراء الآن | Buy Now",
+                    callback_data=f"buy_{prod_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🎧 تواصل مع الدعم الفني",
+                    callback_data="contact_support"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 رجوع للقائمة",
+                    callback_data="back"
+                )
+            ]
+        ]
+
         await query.message.reply_text(
-            text, parse_mode="HTML"
+            text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="HTML"
         )
     except Exception as e:
         logger.exception("Error viewing product")
