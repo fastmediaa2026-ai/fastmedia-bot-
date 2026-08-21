@@ -29,8 +29,8 @@ BASE_URL = "https://bite-store-bot-production.up.railway.app"
 
 ADMIN_ID = 8079213467
 
-# يوزر حسابك المباشر
-SUPPORT_USERNAME = "Fastmedia1"
+# يوزر حسابك الشخصي الصحيح
+SUPPORT_USERNAME = "Fastmedia6"
 
 USD_TO_EGP = 53.0
 PROFIT_MARGIN = 2.0
