@@ -27,7 +27,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 BITE_STORE_API_KEY = os.getenv("BITE_STORE_API_KEY")
 BASE_URL = "https://bite-store-bot-production.up.railway.app"
 
-ADMIN_ID = 8079213467          # <-- رقمك
+ADMIN_ID = 8079213467
 
 USD_TO_EGP = 53.0
 PROFIT_MARGIN = 2.0
@@ -44,7 +44,7 @@ PAYMENT_INFO = (
     "⚠️ بعد التحويل اضغط على الزر بالأسفل وأرسل صورة الإيصال."
 )
 
-# تخزين الطلبات المؤقتة (user_id -> بيانات الطلب)
+# تخزين الطلبات المؤقتة
 pending_orders = {}
 
 
@@ -66,8 +66,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 prod_id = prod.get("id")
 
                 if stock > 0:
-                    btn_text = f"✅ {name} | {price_egp} ج.م"
-                    keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"sel_{prod_id}_{price_egp}")])
+                    # زر أقصر عشان ما يتقصش
+                    short_name = name[:32] + "..." if len(name) > 32 else name
+                    btn_text = f"{short_name} | {price_egp} ج.م"
+                    # بنبعت الاسم الكامل في الـ callback_data
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            btn_text,
+                            callback_data=f"sel_{prod_id}_{price_egp}_{name}"
+                        )
+                    ])
 
             if keyboard:
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -89,20 +97,23 @@ async def select_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    parts = query.data.split("_")
+    # نقسم الـ callback_data
+    parts = query.data.split("_", 3)
     prod_id = parts[1]
     price_egp = parts[2]
+    product_name = parts[3] if len(parts) > 3 else "المنتج"
 
-    # حفظ بيانات الطلب مؤقتاً
     user_id = query.from_user.id
     pending_orders[user_id] = {
         "prod_id": prod_id,
         "price_egp": price_egp,
+        "product_name": product_name,
         "username": query.from_user.username or query.from_user.first_name,
     }
 
     msg = (
-        f"🛒 *تفاصيل الطلب:*\n"
+        f"🛒 *تفاصيل الطلب:*\n\n"
+        f"📦 *المنتج:* {product_name}\n"
         f"💵 *المبلغ المطلوب:* {price_egp} جنيه مصري\n\n"
         f"{PAYMENT_INFO}"
     )
@@ -124,15 +135,13 @@ async def ask_for_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(
         "📸 *من فضلك أرسل صورة إيصال التحويل الآن.*\n\n"
-        "بعد ما تبعت الصورة هيتبعتلي للمراجعة، ولو وافقت هتوصلك البيانات فوراً.",
+        "بعد إرسال الصورة سيتم مراجعتها من الإدارة، وستصلك البيانات فور الموافقة.",
         parse_mode="Markdown"
     )
-    # نحدد إن المستخدم في وضع انتظار الإيصال
     context.user_data["waiting_receipt"] = True
 
 
 async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """استقبال صورة الإيصال من العميل"""
     user_id = update.effective_user.id
 
     if not context.user_data.get("waiting_receipt"):
@@ -146,10 +155,10 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order = pending_orders[user_id]
     context.user_data["waiting_receipt"] = False
 
-    # إرسال الإيصال للأدمن
     caption = (
         f"🧾 *طلب جديد بانتظار المراجعة*\n\n"
         f"👤 العميل: @{order['username']} (`{user_id}`)\n"
+        f"📦 المنتج: {order['product_name']}\n"
         f"💵 المبلغ: *{order['price_egp']} جنيه*\n"
         f"🆔 Product ID: `{order['prod_id']}`\n\n"
         f"اضغط للموافقة أو الرفض:"
@@ -162,7 +171,6 @@ async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ]
 
-    # إرسال الصورة مع الأزرار للأدمن
     await context.bot.send_photo(
         chat_id=ADMIN_ID,
         photo=update.message.photo[-1].file_id,
@@ -182,7 +190,6 @@ async def approve_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    # نتأكد إن اللي بيضغط هو الأدمن
     if query.from_user.id != ADMIN_ID:
         await query.answer("غير مصرح لك", show_alert=True)
         return
@@ -211,11 +218,11 @@ async def approve_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 or "تم تنفيذ طلبك بنجاح!"
             )
 
-            # إرسال المنتج للعميل
             await context.bot.send_message(
                 chat_id=user_id,
                 text=(
                     f"🎉 *تم تأكيد الدفع بنجاح!*\n\n"
+                    f"📦 المنتج: {order['product_name']}\n\n"
                     f"📋 *البيانات/الكود الخاص بك:*\n`{delivered_key}`\n\n"
                     f"شكراً لتعاملك معنا ❤️"
                 ),
@@ -237,7 +244,6 @@ async def approve_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Error approving order")
         await query.edit_message_caption(caption="❌ حصل خطأ أثناء تنفيذ الطلب.")
 
-    # حذف الطلب من الذاكرة
     pending_orders.pop(user_id, None)
 
 
@@ -266,7 +272,7 @@ async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.reply_text("⏳ جاري الرجوع للقائمة...")
-    
+
     class FakeUpdate:
         def __init__(self, message):
             self.message = message
@@ -286,8 +292,6 @@ def main():
     application.add_handler(CallbackQueryHandler(approve_order, pattern=r"^approve_"))
     application.add_handler(CallbackQueryHandler(reject_order, pattern=r"^reject_"))
     application.add_handler(CallbackQueryHandler(back_to_start, pattern=r"^back$"))
-
-    # استقبال الصور (الإيصالات)
     application.add_handler(MessageHandler(filters.PHOTO, handle_receipt))
 
     logger.info("Starting bot with manual approval system...")
