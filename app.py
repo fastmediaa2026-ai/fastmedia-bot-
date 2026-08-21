@@ -46,6 +46,8 @@ PAYMENT_INFO = (
 
 # تخزين الطلبات المؤقتة
 pending_orders = {}
+# تخزين أسماء المنتجات مؤقتاً (prod_id -> name)
+products_cache = {}
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -57,23 +59,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             data = res.json()
             products = data if isinstance(data, list) else data.get("products", [])
             keyboard = []
+            products_cache.clear()
 
             for prod in products:
                 price_usd = float(prod.get("price", 0))
                 price_egp = round(price_usd * PROFIT_MARGIN * USD_TO_EGP)
                 stock = prod.get("stock", 0)
                 name = prod.get("name", "Product")
-                prod_id = prod.get("id")
+                prod_id = str(prod.get("id"))
 
                 if stock > 0:
-                    # زر أقصر عشان ما يتقصش
-                    short_name = name[:32] + "..." if len(name) > 32 else name
+                    products_cache[prod_id] = name
+                    short_name = name[:30] + "..." if len(name) > 30 else name
                     btn_text = f"{short_name} | {price_egp} ج.م"
-                    # بنبعت الاسم الكامل في الـ callback_data
                     keyboard.append([
                         InlineKeyboardButton(
                             btn_text,
-                            callback_data=f"sel_{prod_id}_{price_egp}_{name}"
+                            callback_data=f"sel_{prod_id}_{price_egp}"
                         )
                     ])
 
@@ -97,11 +99,10 @@ async def select_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    # نقسم الـ callback_data
-    parts = query.data.split("_", 3)
+    parts = query.data.split("_")
     prod_id = parts[1]
     price_egp = parts[2]
-    product_name = parts[3] if len(parts) > 3 else "المنتج"
+    product_name = products_cache.get(prod_id, "المنتج")
 
     user_id = query.from_user.id
     pending_orders[user_id] = {
