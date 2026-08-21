@@ -28,6 +28,8 @@ BITE_STORE_API_KEY = os.getenv("BITE_STORE_API_KEY")
 BASE_URL = "https://bite-store-bot-production.up.railway.app"
 
 ADMIN_ID = 8079213467
+# يمكنك تغيير يوزر الدعم الفني هنا إذا أردت
+SUPPORT_USERNAME = "Fastmedia1_bot"
 
 USD_TO_EGP = 53.0
 PROFIT_MARGIN = 2.0
@@ -41,17 +43,18 @@ PAYMENT_INFO = (
     "💳 *طرق الدفع المتاحة:*\n\n"
     "📱 *فودافون كاش:* `01096056061`\n"
     "⚡ *إنستاباي:* `01559740555`\n\n"
-    "⚠️ بعد التحويل اضغط على الزر بالأسفل وأرسل صورة الإيصال."
+    "⚠️ بعد التحويل اضغط على زر إرسال الإيصال بالأسفل وأرسل صورة التحويل."
 )
 
 # تخزين الطلبات المؤقتة
 pending_orders = {}
-# تخزين أسماء المنتجات مؤقتاً (prod_id -> name)
+# تخزين بيانات المنتجات كاملة (prod_id -> dict)
 products_cache = {}
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⏳ جاري جلب المنتجات والأسعار...")
+    msg_target = update.message if update.message else update.callback_query.message
+    status_msg = await msg_target.reply_text("⏳ جاري جلب المنتجات والأسعار...")
 
     try:
         res = requests.get(f"{BASE_URL}/v1/products", headers=HEADERS, timeout=12)
@@ -67,60 +70,108 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 stock = prod.get("stock", 0)
                 name = prod.get("name", "Product")
                 prod_id = str(prod.get("id"))
+                desc = prod.get("description") or prod.get("desc") or "تسليم فوري وبيانات رسمية ومضمونة."
+                delivery_type = prod.get("delivery_type") or "تلقائي 🤖"
 
                 if stock > 0:
-                    products_cache[prod_id] = name
-                    short_name = name[:30] + "..." if len(name) > 30 else name
-                    btn_text = f"{short_name} | {price_egp} ج.م"
+                    products_cache[prod_id] = {
+                        "name": name,
+                        "price_egp": price_egp,
+                        "stock": stock,
+                        "desc": desc,
+                        "delivery_type": delivery_type
+                    }
+                    short_name = name[:28] + "..." if len(name) > 28 else name
+                    btn_text = f"✨ {short_name} | {price_egp} ج.م"
                     keyboard.append([
                         InlineKeyboardButton(
                             btn_text,
-                            callback_data=f"sel_{prod_id}_{price_egp}"
+                            callback_data=f"view_{prod_id}"
                         )
                     ])
 
-            if keyboard:
+            # إضافة زر الدعم الفني في أسفل القائمة الرئيسية
+            keyboard.append([
+                InlineKeyboardButton("🎧 الدعم الفني والمساعدة", url=f"https://t.me/{SUPPORT_USERNAME.replace('@', '')}")
+            ])
+
+            if len(keyboard) > 1:
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                await update.message.reply_text(
-                    "🛒 *اختر المنتج المطلوب للشراء:*",
+                await status_msg.edit_text(
+                    "🛍️ *أهلاً بك في متجر Fastmedia Store*\n\n"
+                    "اختر المنتج المطلوب من القائمة لعرض التفاصيل والشراء 👇",
                     reply_markup=reply_markup,
                     parse_mode="Markdown"
                 )
             else:
-                await update.message.reply_text("⚠️ لا توجد منتجات متوفرة حالياً.")
+                await status_msg.edit_text("⚠️ لا توجد منتجات متوفرة حالياً.")
         else:
-            await update.message.reply_text("❌ تعذر الاتصال بالمتجر، يرجى المحاولة لاحقاً.")
+            await status_msg.edit_text("❌ تعذر الاتصال بالمتجر، يرجى المحاولة لاحقاً.")
     except Exception:
         logger.exception("Error in /start")
-        await update.message.reply_text("❌ حدث خطأ أثناء الاتصال بالخادم.")
+        await status_msg.edit_text("❌ حدث خطأ أثناء الاتصال بالخادم.")
 
 
-async def select_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    parts = query.data.split("_")
-    prod_id = parts[1]
-    price_egp = parts[2]
-    product_name = products_cache.get(prod_id, "المنتج")
+    prod_id = query.data.split("_")[1]
+    prod = products_cache.get(prod_id)
+
+    if not prod:
+        await query.edit_message_text("⚠️ لم يتم العثور على تفاصيل المنتج، يرجى الرجوع للقائمة عبر /start")
+        return
+
+    card_text = (
+        f"📦 *{prod['name']}*\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📝 *الوصف:* {prod['desc']}\n\n"
+        f"💰 *السعر:* `{prod['price_egp']} جنيه مصري`\n"
+        f"🚦 *الحالة:* ✅ متوفر وجاهز للتسليم\n"
+        f"📦 *نوع التسليم:* {prod['delivery_type']}\n"
+        f"📊 *المتوفر بالمخزون:* {prod['stock']}\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"اضغط على *شراء الآن* لإتمام الدفع واستلام الطلب:"
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🛍️ شراء الآن", callback_data=f"buy_{prod_id}")],
+        [InlineKeyboardButton("🎧 استفسار / الدعم الفني", url=f"https://t.me/{SUPPORT_USERNAME.replace('@', '')}")],
+        [InlineKeyboardButton("🔙 رجوع لقائمة المنتجات", callback_data="back")]
+    ]
+
+    await query.edit_message_text(card_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
+
+async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    prod_id = query.data.split("_")[1]
+    prod = products_cache.get(prod_id)
+
+    if not prod:
+        await query.edit_message_text("⚠️ انتهت صلاحية الجلسة، ابدأ من جديد بـ /start")
+        return
 
     user_id = query.from_user.id
     pending_orders[user_id] = {
         "prod_id": prod_id,
-        "price_egp": price_egp,
-        "product_name": product_name,
+        "price_egp": prod["price_egp"],
+        "product_name": prod["name"],
         "username": query.from_user.username or query.from_user.first_name,
     }
 
     msg = (
-        f"🛒 *تفاصيل الطلب:*\n\n"
-        f"📦 *المنتج:* {product_name}\n"
-        f"💵 *المبلغ المطلوب:* {price_egp} جنيه مصري\n\n"
+        f"🛒 *تأكيد طلب الشراء:*\n\n"
+        f"📦 *المنتج:* {prod['name']}\n"
+        f"💵 *المبلغ المطلوب:* *{prod['price_egp']} جنيه مصري*\n\n"
         f"{PAYMENT_INFO}"
     )
     keyboard = [
         [InlineKeyboardButton("📤 لقد قمت بالتحويل - إرسال الإيصال", callback_data="send_receipt")],
-        [InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back")]
+        [InlineKeyboardButton("🔙 رجوع لتفاصيل المنتج", callback_data=f"view_{prod_id}")]
     ]
     await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
@@ -219,6 +270,10 @@ async def approve_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 or "تم تنفيذ طلبك بنجاح!"
             )
 
+            support_btn = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", url=f"https://t.me/{SUPPORT_USERNAME.replace('@', '')}")]
+            ])
+
             await context.bot.send_message(
                 chat_id=user_id,
                 text=(
@@ -227,6 +282,7 @@ async def approve_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     f"📋 *البيانات/الكود الخاص بك:*\n`{delivered_key}`\n\n"
                     f"شكراً لتعاملك معنا ❤️"
                 ),
+                reply_markup=support_btn,
                 parse_mode="Markdown"
             )
 
@@ -234,9 +290,13 @@ async def approve_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption=f"✅ تم الموافقة وإرسال المنتج للعميل `{user_id}` بنجاح."
             )
         else:
+            support_btn = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", url=f"https://t.me/{SUPPORT_USERNAME.replace('@', '')}")]
+            ])
             await context.bot.send_message(
                 chat_id=user_id,
-                text="❌ حدثت مشكلة أثناء سحب المنتج. تواصل مع الدعم."
+                text="❌ حدثت مشكلة أثناء سحب المنتج. يرجى الضغط بالأسفل للتواصل مع الدعم.",
+                reply_markup=support_btn
             )
             await query.edit_message_caption(
                 caption="❌ فشل سحب المنتج من المتجر (تأكد من الرصيد أو الكمية)."
@@ -261,9 +321,14 @@ async def reject_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id in pending_orders:
         pending_orders.pop(user_id)
 
+    support_btn = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎧 تواصل مع الإدارة", url=f"https://t.me/{SUPPORT_USERNAME.replace('@', '')}")]
+    ])
+
     await context.bot.send_message(
         chat_id=user_id,
-        text="❌ عذراً، تم رفض إيصال الدفع.\nلو فيه مشكلة تواصل مع الإدارة."
+        text="❌ عذراً، تم رفض إيصال الدفع.\nإذا كان هناك خطأ تواصل مع الإدارة مباشرة.",
+        reply_markup=support_btn
     )
 
     await query.edit_message_caption(caption=f"❌ تم رفض الطلب الخاص بالعميل `{user_id}`.")
@@ -272,12 +337,7 @@ async def reject_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await query.message.reply_text("⏳ جاري الرجوع للقائمة...")
-
-    class FakeUpdate:
-        def __init__(self, message):
-            self.message = message
-    await start(FakeUpdate(query.message), context)
+    await start(update, context)
 
 
 def main():
@@ -288,7 +348,8 @@ def main():
     application = Application.builder().token(TELEGRAM_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(select_product, pattern=r"^sel_"))
+    application.add_handler(CallbackQueryHandler(view_product, pattern=r"^view_"))
+    application.add_handler(CallbackQueryHandler(buy_product, pattern=r"^buy_"))
     application.add_handler(CallbackQueryHandler(ask_for_receipt, pattern=r"^send_receipt$"))
     application.add_handler(CallbackQueryHandler(approve_order, pattern=r"^approve_"))
     application.add_handler(CallbackQueryHandler(reject_order, pattern=r"^reject_"))
