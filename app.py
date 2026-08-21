@@ -302,10 +302,32 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prod_id = str(query.data.split("_")[-1])
         product = products_cache.get(prod_id)
 
+        # في حالة إعادة تشغيل البوت وفراغ الكاش يتم جلب البيانات تلقائياً
         if not product:
-            await query.message.reply_text(
-                "❌ تعذر العثور على المنتج."
+            res = requests.get(
+                f"{BASE_URL}/v1/products",
+                headers=HEADERS,
+                timeout=12
             )
+            if res.status_code == 200:
+                data = res.json()
+                products = data if isinstance(data, list) else data.get("products", [])
+                for p in products:
+                    pid = str(p.get("id"))
+                    p_usd = float(p.get("price", 0))
+                    p_stock = p.get("stock", 0)
+                    p_egp = get_product_price(pid, p_usd)
+                    if p_stock > 0:
+                        products_cache[pid] = {
+                            "name": p.get("name", "Product"),
+                            "price_egp": p_egp,
+                            "price_usd": p_usd,
+                            "stock": p_stock
+                        }
+                product = products_cache.get(prod_id)
+
+        if not product:
+            await query.message.reply_text("❌ هذا المنتج لم يعد متاحاً حالياً.")
             return
 
         name = product.get("name", "بدون اسم")
@@ -344,7 +366,7 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="HTML"
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Error viewing product")
         await query.message.reply_text(
             "❌ حدث خطأ أثناء جلب المنتج."
@@ -1127,7 +1149,6 @@ async def manage_price_product(update, context):
     await query.answer()
 
     try:
-        # استخراج Product ID بشكل صحيح
         parts = query.data.split("_")
         prod_id = int(parts[-1])
 
@@ -1164,12 +1185,10 @@ async def manage_price_product(update, context):
             or 0
         )
 
-        # السعر اليدوي إن وُجد
         if str(prod_id) in manual_prices:
             price_egp = manual_prices[str(prod_id)]
             price_type = "✏️ سعر يدوي"
         else:
-            # معادلة أرباحك — لا تتغير
             price_egp = calculate_automatic_price(price_usd)
             price_type = "🤖 سعر تلقائي"
 
