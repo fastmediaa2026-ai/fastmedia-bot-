@@ -299,7 +299,7 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     try:
-        prod_id = int(query.data.split(":")[-1])
+        prod_id = int(query.data.split("_")[-1])
         product = next(
             (p for p in products_cache if int(p.get("id", -1)) == prod_id), None
         )
