@@ -66,16 +66,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 stock = prod.get("stock", 0)
                 name = prod.get("name", "Product")
                 prod_id = str(prod.get("id"))
-                desc = prod.get("description") or prod.get("desc") or "تسليم فوري وبيانات رسمية ومضمونة."
-                delivery_type = prod.get("delivery_type") or "تلقائي 🤖"
 
                 if stock > 0:
                     products_cache[prod_id] = {
                         "name": name,
                         "price_egp": price_egp,
-                        "stock": stock,
-                        "desc": desc,
-                        "delivery_type": delivery_type
+                        "price_usd": price_usd,
+                        "stock": stock
                     }
                     short_name = name[:28] + "..." if len(name) > 28 else name
                     btn_text = f"✨ {short_name} | {price_egp} ج.م"
@@ -94,7 +91,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 await status_msg.edit_text(
                     "🛍️ *أهلاً بك في متجر Fastmedia Store*\n\n"
-                    "اختر المنتج المطلوب من القائمة لعرض التفاصيل والشراء 👇",
+                    "اختر المنتج المطلوب لعرض بطاقة المواصفات والتفاصيل 👇",
                     reply_markup=reply_markup,
                     parse_mode="Markdown"
                 )
@@ -112,28 +109,58 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     prod_id = query.data.split("_")[1]
-    prod = products_cache.get(prod_id)
+    cached = products_cache.get(prod_id, {})
 
-    if not prod:
-        await query.edit_message_text("⚠️ لم يتم العثور على تفاصيل المنتج، يرجى الرجوع للقائمة عبر /start")
-        return
+    # محاولة سحب التفاصيل الكاملة للمنتج مباشرة من الـ API
+    description = "تسليم فوري وبيانات رسمية ومضمونة."
+    delivery_type = "توصيل تلقائي 🤖"
+    format_type = "بيانات مباشرة 📎"
+    sold_count = "0"
+    stock_count = cached.get("stock", 1)
+    name = cached.get("name", "منتج")
+    price_egp = cached.get("price_egp", 0)
+    price_usd = cached.get("price_usd", 0)
 
+    try:
+        res = requests.get(f"{BASE_URL}/v1/products/{prod_id}", headers=HEADERS, timeout=10)
+        if res.status_code == 200:
+            p_data = res.json()
+            description = p_data.get("description") or p_data.get("desc") or description
+            delivery_type = p_data.get("delivery_type") or p_data.get("type") or delivery_type
+            format_type = p_data.get("format") or format_type
+            sold_count = str(p_data.get("sold", p_data.get("sold_count", "0")))
+            stock_count = p_data.get("stock", stock_count)
+            name = p_data.get("name", name)
+            if not price_egp:
+                price_usd = float(p_data.get("price", 0))
+                price_egp = round(price_usd * PROFIT_MARGIN * USD_TO_EGP)
+    except Exception:
+        pass
+
+    # تحديث الكاش بالبيانات الأحدث
+    products_cache[prod_id] = {
+        "name": name,
+        "price_egp": price_egp,
+        "price_usd": price_usd,
+        "stock": stock_count,
+        "desc": description
+    }
+
+    # تصميم كارت المنتج بنفس شكل المتجر الأصلي
     card_text = (
-        f"📦 *{prod['name']}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📝 *الوصف:* {prod['desc']}\n\n"
-        f"💰 *السعر:* `{prod['price_egp']} جنيه مصري`\n"
-        f"🚦 *الحالة:* ✅ متوفر وجاهز للتسليم\n"
-        f"📦 *نوع التسليم:* {prod['delivery_type']}\n"
-        f"📊 *المتوفر بالمخزون:* {prod['stock']}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"اضغط على *شراء الآن* لإتمام الدفع واستلام الطلب:"
+        f"📝 {description}\n\n"
+        f"💰 *Price:* ${price_usd} ≈ *{price_egp} ج.م*\n"
+        f"🚦 *Status:* ✅ نشط\n"
+        f"📦 *Delivery Type:* {delivery_type}\n"
+        f"🧩 *Format:* {format_type}\n"
+        f"📊 *In Stock:* {stock_count}\n"
+        f"🔥 *Sold:* {sold_count}"
     )
 
     keyboard = [
-        [InlineKeyboardButton("🛍️ شراء الآن", callback_data=f"buy_{prod_id}")],
+        [InlineKeyboardButton("🛍️ Buy Now | شراء الآن", callback_data=f"buy_{prod_id}")],
         [InlineKeyboardButton("🎧 استفسار / الدعم الفني", callback_data="contact_support")],
-        [InlineKeyboardButton("🔙 رجوع لقائمة المنتجات", callback_data="back")]
+        [InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back")]
     ]
 
     await query.edit_message_text(card_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
@@ -166,7 +193,7 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     keyboard = [
         [InlineKeyboardButton("📤 لقد قمت بالتحويل - إرسال الإيصال", callback_data="send_receipt")],
-        [InlineKeyboardButton("🔙 رجوع لتفاصيل المنتج", callback_data=f"view_{prod_id}")]
+        [InlineKeyboardButton("🔙 رجوع لبطاقة المنتج", callback_data=f"view_{prod_id}")]
     ]
     await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
@@ -195,7 +222,7 @@ async def request_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_support_msg"] = True
     await query.edit_message_text(
         "✍️ *أهلاً بك في الدعم الفني!*\n\n"
-        "اكتب رسالتك أو استفسارك هنا، وسيتم إرسالها للإدارة للرد عليك مباشرة.",
+        "اكتب رسالتك أو استفسارك هنا، وسيتم إرسالها للإدارة للرد عليك مباشرة في نفس الشات.",
         parse_mode="Markdown"
     )
 
@@ -204,7 +231,7 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
 
-    # رد الأدمن على رسالة العميل
+    # رد الأدمن على العميل
     if user_id == ADMIN_ID and context.user_data.get("replying_to_user"):
         target_client_id = context.user_data.pop("replying_to_user")
         try:
@@ -238,7 +265,7 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_btn,
             parse_mode="Markdown"
         )
-        await update.message.reply_text("✅ تم إرسال رسالتك إلى الدعم الفني، وسيتم الرد عليك هنا فوراً.")
+        await update.message.reply_text("✅ تم إرسال استفسارك إلى الدعم الفني، وسيصلك الرد هنا مباشرة.")
 
 
 async def start_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -421,7 +448,7 @@ def main():
     application.add_handler(MessageHandler(filters.PHOTO, handle_receipt))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text))
 
-    logger.info("Starting bot with integrated live support system...")
+    logger.info("Starting bot with product card UI and live support...")
     application.run_polling(drop_pending_updates=True)
 
 
