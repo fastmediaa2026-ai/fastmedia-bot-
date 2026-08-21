@@ -1103,7 +1103,7 @@ async def manage_price_product(update, context):
     await query.answer()
 
     try:
-        prod_id = int(query.data.split(":")[-1])
+        prod_id = int(query.data.split("_")[-1])
 
         # جلب قائمة المنتجات التي تعمل بالفعل
         res = requests.get(
