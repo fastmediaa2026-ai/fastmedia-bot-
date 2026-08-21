@@ -1102,7 +1102,9 @@ async def manage_price_product(update, context):
     await query.answer()
 
     try:
-        prod_id = int(query.data.split("_")[-1])
+        # استخراج Product ID بشكل صحيح
+        parts = query.data.split("_")
+        prod_id = int(parts[-1])
 
         res = requests.get(
             f"{BASE_URL}/v1/products",
@@ -1120,7 +1122,10 @@ async def manage_price_product(update, context):
         products = data.get("products", data) if isinstance(data, dict) else data
 
         product = next(
-            (p for p in products if int(p.get("id", -1)) == prod_id),
+            (
+                p for p in products
+                if str(p.get("id", "")) == str(prod_id)
+            ),
             None
         )
 
@@ -1134,8 +1139,14 @@ async def manage_price_product(update, context):
             or 0
         )
 
-        # التسعير التلقائي الحالي — لا يتغير
-        price_egp = price_usd * 2.00 * 53.00
+        # السعر اليدوي إن وُجد
+        if str(prod_id) in manual_prices:
+            price_egp = manual_prices[str(prod_id)]
+            price_type = "✏️ سعر يدوي"
+        else:
+            # معادلة أرباحك — لا تتغير
+            price_egp = calculate_automatic_price(price_usd)
+            price_type = "🤖 سعر تلقائي"
 
         keyboard = [
             [
@@ -1161,7 +1172,8 @@ async def manage_price_product(update, context):
         await query.message.reply_text(
             f"📦 {product.get('name', 'بدون اسم')}\n\n"
             f"💵 السعر الأساسي: ${price_usd:.2f}\n"
-            f"💰 سعر البيع: {price_egp:.2f} جنيه",
+            f"💰 سعر البيع: {price_egp:.2f} جنيه\n"
+            f"📌 نوع السعر: {price_type}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
