@@ -29,8 +29,8 @@ BASE_URL = "https://bite-store-bot-production.up.railway.app"
 
 ADMIN_ID = 8079213467
 
-# ⚠️ اكتب هنا يوزر حسابك الشخصي في تليجرام بدون علامة @
-SUPPORT_USERNAME = "YOUR_TELEGRAM_USERNAME"
+# يوزر حسابك المباشر
+SUPPORT_USERNAME = "Fastmedia1"
 
 USD_TO_EGP = 53.0
 PROFIT_MARGIN = 2.0
@@ -91,9 +91,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                     ])
 
-            # إضافة زر الدعم الفني في أسفل القائمة الرئيسية
+            # زر الدعم الفني في أسفل القائمة الرئيسية
             keyboard.append([
-                InlineKeyboardButton("🎧 الدعم الفني والمساعدة", url=f"https://t.me/{SUPPORT_USERNAME.replace('@', '')}")
+                InlineKeyboardButton("🎧 الدعم الفني والمساعدة", url=f"https://t.me/{SUPPORT_USERNAME}")
             ])
 
             if len(keyboard) > 1:
@@ -138,7 +138,7 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [InlineKeyboardButton("🛍️ شراء الآن", callback_data=f"buy_{prod_id}")],
-        [InlineKeyboardButton("🎧 استفسار / الدعم الفني", url=f"https://t.me/{SUPPORT_USERNAME.replace('@', '')}")],
+        [InlineKeyboardButton("🎧 استفسار / الدعم الفني", url=f"https://t.me/{SUPPORT_USERNAME}")],
         [InlineKeyboardButton("🔙 رجوع لقائمة المنتجات", callback_data="back")]
     ]
 
@@ -272,7 +272,7 @@ async def approve_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             support_btn = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", url=f"https://t.me/{SUPPORT_USERNAME.replace('@', '')}")]
+                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", url=f"https://t.me/{SUPPORT_USERNAME}")]
             ])
 
             await context.bot.send_message(
@@ -292,7 +292,7 @@ async def approve_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         else:
             support_btn = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", url=f"https://t.me/{SUPPORT_USERNAME.replace('@', '')}")]
+                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", url=f"https://t.me/{SUPPORT_USERNAME}")]
             ])
             await context.bot.send_message(
                 chat_id=user_id,
@@ -323,7 +323,7 @@ async def reject_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending_orders.pop(user_id)
 
     support_btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎧 تواصل مع الإدارة", url=f"https://t.me/{SUPPORT_USERNAME.replace('@', '')}")]
+        [InlineKeyboardButton("🎧 تواصل مع الإدارة", url=f"https://t.me/{SUPPORT_USERNAME}")]
     ])
 
     await context.bot.send_message(
