@@ -16,15 +16,19 @@ from telegram.ext import (
 # ============================================================
 # LOGGING
 # ============================================================
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
+
 logger = logging.getLogger("fastmedia_bot")
+
 
 # ============================================================
 # CONFIG
 # ============================================================
+
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 BITE_STORE_API_KEY = os.getenv("BITE_STORE_API_KEY")
 
@@ -35,46 +39,45 @@ ADMIN_ID = 8079213467
 USD_TO_EGP = 53.0
 PROFIT_MARGIN = 2.0
 
+
 # ============================================================
-# MANUAL PRICES
-# ============================================================
-# الأسعار اليدوية للمنتجات.
-#
-# إذا كان المنتج غير موجود هنا:
-# سيتم استخدام المعادلة التلقائية.
-#
-# مثال:
-# {
-#     "123": 250,
-#     "456": 180
-# }
-#
-# يتم حفظ الأسعار في ملف JSON حتى لا تضيع بعد Restart.
+# MANUAL PRICES STORAGE
 # ============================================================
 
 MANUAL_PRICES_FILE = "manual_prices.json"
 
 
 def load_manual_prices():
-    """تحميل الأسعار اليدوية من الملف."""
     try:
-        if os.path.exists(MANUAL_PRICES_FILE):
-            with open(MANUAL_PRICES_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
+        if not os.path.exists(MANUAL_PRICES_FILE):
+            return {}
 
-                if isinstance(data, dict):
-                    return data
+        with open(
+            MANUAL_PRICES_FILE,
+            "r",
+            encoding="utf-8"
+        ) as f:
+
+            data = json.load(f)
+
+            if isinstance(data, dict):
+                return data
 
     except Exception:
-        logger.exception("Error loading manual prices")
+        logger.exception("Failed to load manual prices")
 
     return {}
 
 
 def save_manual_prices():
-    """حفظ الأسعار اليدوية."""
     try:
-        with open(MANUAL_PRICES_FILE, "w", encoding="utf-8") as f:
+
+        with open(
+            MANUAL_PRICES_FILE,
+            "w",
+            encoding="utf-8"
+        ) as f:
+
             json.dump(
                 manual_prices,
                 f,
@@ -83,22 +86,26 @@ def save_manual_prices():
             )
 
     except Exception:
-        logger.exception("Error saving manual prices")
+        logger.exception("Failed to save manual prices")
 
 
 manual_prices = load_manual_prices()
 
+
 # ============================================================
 # HEADERS
 # ============================================================
+
 HEADERS = {
     "X-API-Key": BITE_STORE_API_KEY,
     "Content-Type": "application/json"
 }
 
+
 # ============================================================
-# PAYMENT INFO
+# PAYMENT
 # ============================================================
+
 PAYMENT_INFO = (
     "💳 *طرق الدفع المتاحة:*\n\n"
     "📱 *فودافون كاش:* `01096056061`\n"
@@ -106,51 +113,61 @@ PAYMENT_INFO = (
     "⚠️ بعد التحويل اضغط على زر إرسال الإيصال بالأسفل وأرسل صورة التحويل."
 )
 
+
 # ============================================================
 # MEMORY
 # ============================================================
+
 pending_orders = {}
+
 products_cache = {}
+
 
 # ============================================================
 # PRICE FUNCTIONS
 # ============================================================
 
+def calculate_automatic_price(price_usd):
+    """
+    السعر التلقائي:
+    USD × PROFIT_MARGIN × USD_TO_EGP
+    """
 
-def calculate_price(price_usd):
-    """
-    السعر التلقائي حسب المعادلة الحالية.
-    """
     return round(
-        float(price_usd) * PROFIT_MARGIN * USD_TO_EGP
+        float(price_usd)
+        * PROFIT_MARGIN
+        * USD_TO_EGP
     )
 
 
 def get_product_price(prod_id, price_usd):
     """
-    الحصول على سعر المنتج.
-
-    إذا كان هناك سعر يدوي:
-        يستخدم السعر اليدوي.
-
-    إذا لم يوجد:
-        يستخدم المعادلة التلقائية.
+    إذا كان هناك سعر يدوي يستخدمه.
+    غير ذلك يستخدم المعادلة التلقائية.
     """
 
     prod_id = str(prod_id)
 
     if prod_id in manual_prices:
-        return int(manual_prices[prod_id])
 
-    return calculate_price(price_usd)
+        return int(
+            manual_prices[prod_id]
+        )
+
+    return calculate_automatic_price(
+        price_usd
+    )
 
 
 # ============================================================
 # START
 # ============================================================
 
+async def start(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_target = (
         update.message
         if update.message
@@ -162,106 +179,112 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
+
         res = requests.get(
             f"{BASE_URL}/v1/products",
             headers=HEADERS,
             timeout=12
         )
 
-        if res.status_code == 200:
-
-            data = res.json()
-
-            products = (
-                data
-                if isinstance(data, list)
-                else data.get("products", [])
-            )
-
-            keyboard = []
-
-            products_cache.clear()
-
-            for prod in products:
-
-                price_usd = float(prod.get("price", 0))
-
-                prod_id = str(prod.get("id"))
-
-                price_egp = get_product_price(
-                    prod_id,
-                    price_usd
-                )
-
-                stock = prod.get("stock", 0)
-
-                name = prod.get(
-                    "name",
-                    "Product"
-                )
-
-                if stock > 0:
-
-                    products_cache[prod_id] = {
-                        "name": name,
-                        "price_egp": price_egp,
-                        "stock": stock,
-                        "price_usd": price_usd
-                    }
-
-                    short_name = (
-                        name[:28] + "..."
-                        if len(name) > 28
-                        else name
-                    )
-
-                    btn_text = (
-                        f"✨ {short_name} | "
-                        f"{price_egp} ج.م"
-                    )
-
-                    keyboard.append([
-                        InlineKeyboardButton(
-                            btn_text,
-                            callback_data=f"view_{prod_id}"
-                        )
-                    ])
-
-            keyboard.append([
-                InlineKeyboardButton(
-                    "🎧 تواصل مع الدعم الفني",
-                    callback_data="contact_support"
-                )
-            ])
-
-            if len(keyboard) > 1:
-
-                reply_markup = InlineKeyboardMarkup(
-                    keyboard
-                )
-
-                await status_msg.edit_text(
-                    "🛍️ *أهلاً بك في متجر Fastmedia Store*\n\n"
-                    "اختر المنتج المطلوب لعرض التفاصيل والمواصفات 👇",
-                    reply_markup=reply_markup,
-                    parse_mode="Markdown"
-                )
-
-            else:
-
-                await status_msg.edit_text(
-                    "⚠️ لا توجد منتجات متوفرة حالياً."
-                )
-
-        else:
+        if res.status_code != 200:
 
             await status_msg.edit_text(
                 "❌ تعذر الاتصال بالمتجر، يرجى المحاولة لاحقاً."
             )
 
+            return
+
+        data = res.json()
+
+        products = (
+            data
+            if isinstance(data, list)
+            else data.get("products", [])
+        )
+
+        keyboard = []
+
+        products_cache.clear()
+
+        for prod in products:
+
+            prod_id = str(
+                prod.get("id")
+            )
+
+            name = prod.get(
+                "name",
+                "Product"
+            )
+
+            price_usd = float(
+                prod.get(
+                    "price",
+                    0
+                )
+            )
+
+            stock = prod.get(
+                "stock",
+                0
+            )
+
+            price_egp = get_product_price(
+                prod_id,
+                price_usd
+            )
+
+            if stock > 0:
+
+                products_cache[prod_id] = {
+                    "name": name,
+                    "price_egp": price_egp,
+                    "price_usd": price_usd,
+                    "stock": stock
+                }
+
+                short_name = (
+                    name[:28] + "..."
+                    if len(name) > 28
+                    else name
+                )
+
+                keyboard.append([
+                    InlineKeyboardButton(
+                        f"✨ {short_name} | {price_egp} ج.م",
+                        callback_data=f"view_{prod_id}"
+                    )
+                ])
+
+        keyboard.append([
+            InlineKeyboardButton(
+                "🎧 تواصل مع الدعم الفني",
+                callback_data="contact_support"
+            )
+        ])
+
+        if len(keyboard) > 1:
+
+            await status_msg.edit_text(
+                "🛍️ *أهلاً بك في متجر Fastmedia Store*\n\n"
+                "اختر المنتج المطلوب لعرض التفاصيل والمواصفات 👇",
+                reply_markup=InlineKeyboardMarkup(
+                    keyboard
+                ),
+                parse_mode="Markdown"
+            )
+
+        else:
+
+            await status_msg.edit_text(
+                "⚠️ لا توجد منتجات متوفرة حالياً."
+            )
+
     except Exception:
 
-        logger.exception("Error in /start")
+        logger.exception(
+            "Error in /start"
+        )
 
         await status_msg.edit_text(
             "❌ حدث خطأ أثناء الاتصال بالخادم."
@@ -272,14 +295,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # VIEW PRODUCT
 # ============================================================
 
-
-async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def view_product(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     query = update.callback_query
 
     await query.answer()
 
-    prod_id = query.data.split("_", 1)[1]
+    prod_id = query.data.split(
+        "_",
+        1
+    )[1]
 
     cached = products_cache.get(
         prod_id,
@@ -301,6 +329,11 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         1
     )
 
+    price_usd = cached.get(
+        "price_usd",
+        0
+    )
+
     description = (
         "تسليم فوري وبيانات رسمية ومضمونة بأعلى جودة."
     )
@@ -310,11 +343,6 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     format_type = "بيانات مباشرة 📎"
 
     sold_count = "0"
-
-    price_usd = cached.get(
-        "price_usd",
-        0
-    )
 
     try:
 
@@ -372,9 +400,6 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             )
 
-            # مهم:
-            # إعادة حساب السعر هنا أيضًا
-            # مع احترام السعر اليدوي.
             price_egp = get_product_price(
                 prod_id,
                 price_usd
@@ -389,14 +414,10 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     products_cache[prod_id] = {
         "name": name,
         "price_egp": price_egp,
+        "price_usd": price_usd,
         "stock": stock_count,
-        "desc": description,
-        "price_usd": price_usd
+        "desc": description
     }
-
-    # ========================================================
-    # PRODUCT CARD
-    # ========================================================
 
     card_text = (
         f"📦 *{name}*\n"
@@ -434,7 +455,9 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(
         card_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
         parse_mode="Markdown"
     )
 
@@ -443,16 +466,23 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # BUY PRODUCT
 # ============================================================
 
-
-async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def buy_product(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     query = update.callback_query
 
     await query.answer()
 
-    prod_id = query.data.split("_", 1)[1]
+    prod_id = query.data.split(
+        "_",
+        1
+    )[1]
 
-    prod = products_cache.get(prod_id)
+    prod = products_cache.get(
+        prod_id
+    )
 
     if not prod:
 
@@ -499,7 +529,9 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.edit_message_text(
         msg,
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
         parse_mode="Markdown"
     )
 
@@ -508,8 +540,10 @@ async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ASK FOR RECEIPT
 # ============================================================
 
-
-async def ask_for_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def ask_for_receipt(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     query = update.callback_query
 
@@ -532,21 +566,27 @@ async def ask_for_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
-    context.user_data["waiting_receipt"] = True
+    context.user_data[
+        "waiting_receipt"
+    ] = True
 
 
 # ============================================================
 # SUPPORT
 # ============================================================
 
-
-async def request_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def request_support(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     query = update.callback_query
 
     await query.answer()
 
-    context.user_data["waiting_support_msg"] = True
+    context.user_data[
+        "waiting_support_msg"
+    ] = True
 
     await query.edit_message_text(
         "✍️ *أهلاً بك في الدعم الفني!*\n\n"
@@ -557,23 +597,27 @@ async def request_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
-# USER TEXT
+# ADMIN REPLY / USER TEXT
 # ============================================================
 
-
-async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_user_text(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
 
     user_id = update.effective_user.id
 
     text = update.message.text
 
-    # ========================================================
+    # --------------------------------------------------------
     # ADMIN REPLY
-    # ========================================================
+    # --------------------------------------------------------
 
     if (
         user_id == ADMIN_ID
-        and context.user_data.get("replying_to_user")
+        and context.user_data.get(
+            "replying_to_user"
+        )
     ):
 
         target_client_id = context.user_data.pop(
@@ -585,7 +629,7 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 chat_id=target_client_id,
                 text=(
-                    f"💬 *رد الدعم الفني:*\n\n"
+                    "💬 *رد الدعم الفني:*\n\n"
                     f"{text}"
                 ),
                 parse_mode="Markdown"
@@ -603,13 +647,15 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return
 
-    # ========================================================
-    # MANUAL PRICE INPUT
-    # ========================================================
+    # --------------------------------------------------------
+    # ADMIN MANUAL PRICE
+    # --------------------------------------------------------
 
     if (
         user_id == ADMIN_ID
-        and context.user_data.get("editing_price")
+        and context.user_data.get(
+            "editing_price"
+        )
     ):
 
         prod_id = context.user_data.pop(
@@ -618,62 +664,81 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
 
-            # السماح بأرقام صحيحة أو عشرية
+            new_price_text = text.strip().replace(
+                ",",
+                "."
+            )
+
             new_price = float(
-                text.replace(",", ".").strip()
+                new_price_text
             )
 
             if new_price <= 0:
 
+                context.user_data[
+                    "editing_price"
+                ] = prod_id
+
                 await update.message.reply_text(
-                    "❌ السعر يجب أن يكون أكبر من صفر."
+                    "❌ السعر يجب أن يكون أكبر من صفر.\n\n"
+                    "أرسل السعر مرة أخرى، مثال:\n"
+                    "`250`",
+                    parse_mode="Markdown"
                 )
 
                 return
 
-            # نحفظ السعر اليدوي
-            manual_prices[str(prod_id)] = int(
+            new_price = int(
                 round(new_price)
             )
 
+            manual_prices[
+                str(prod_id)
+            ] = new_price
+
             save_manual_prices()
 
-            # تحديث الكاش لو المنتج موجود
             if prod_id in products_cache:
 
-                products_cache[prod_id][
-                    "price_egp"
-                ] = manual_prices[str(prod_id)]
+                products_cache[
+                    prod_id
+                ]["price_egp"] = new_price
 
             await update.message.reply_text(
-                f"✅ تم تعديل سعر المنتج.\n\n"
+                "✅ *تم تعديل السعر بنجاح*\n\n"
                 f"🆔 Product ID: `{prod_id}`\n"
-                f"💰 السعر الجديد: "
-                f"*{manual_prices[str(prod_id)]} جنيه*",
+                f"💰 السعر الجديد: *{new_price} جنيه*\n\n"
+                "📌 هذا المنتج أصبح يستخدم السعر اليدوي.\n"
+                "باقي المنتجات ستظل على السعر التلقائي.",
                 parse_mode="Markdown"
             )
 
         except ValueError:
 
-            # إعادة الحالة حتى يستطيع المحاولة مرة أخرى
-            context.user_data["editing_price"] = prod_id
+            context.user_data[
+                "editing_price"
+            ] = prod_id
 
             await update.message.reply_text(
-                "❌ من فضلك أرسل السعر كرقم فقط.\n\n"
-                "مثال:\n"
+                "❌ السعر غير صحيح.\n\n"
+                "أرسل رقم السعر فقط، مثال:\n"
                 "`250`",
                 parse_mode="Markdown"
             )
 
         return
 
-    # ========================================================
+    # --------------------------------------------------------
     # SUPPORT MESSAGE
-    # ========================================================
+    # --------------------------------------------------------
 
-    if context.user_data.get("waiting_support_msg"):
+    if context.user_data.get(
+        "waiting_support_msg"
+    ):
 
-        context.user_data["waiting_support_msg"] = False
+        context.user_data[
+            "waiting_support_msg"
+        ] = False
 
         username = (
             update.effective_user.username
@@ -712,15 +777,12 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ADMIN REPLY
 # ============================================================
 
-
 async def start_admin_reply(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
     query = update.callback_query
-
-    await query.answer()
 
     if query.from_user.id != ADMIN_ID:
 
@@ -730,6 +792,8 @@ async def start_admin_reply(
         )
 
         return
+
+    await query.answer()
 
     client_id = int(
         query.data.split("_")[2]
@@ -741,14 +805,14 @@ async def start_admin_reply(
 
     await query.message.reply_text(
         f"✍️ اكتب الآن نص الرد الذي تريد إرساله "
-        f"للعميل `{client_id}`:"
+        f"للعميل `{client_id}`:",
+        parse_mode="Markdown"
     )
 
 
 # ============================================================
-# HANDLE RECEIPT
+# RECEIPT
 # ============================================================
-
 
 async def handle_receipt(
     update: Update,
@@ -766,8 +830,7 @@ async def handle_receipt(
     if user_id not in pending_orders:
 
         await update.message.reply_text(
-            "⚠️ انتهت صلاحية الطلب، "
-            "ابدأ من جديد بـ /start"
+            "⚠️ انتهت صلاحية الطلب، ابدأ من جديد بـ /start"
         )
 
         context.user_data[
@@ -784,11 +847,9 @@ async def handle_receipt(
 
     caption = (
         f"🧾 *طلب جديد بانتظار المراجعة*\n\n"
-        f"👤 العميل: @{order['username']} "
-        f"(`{user_id}`)\n"
+        f"👤 العميل: @{order['username']} (`{user_id}`)\n"
         f"📦 المنتج: {order['product_name']}\n"
-        f"💵 المبلغ: "
-        f"*{order['price_egp']} جنيه*\n"
+        f"💵 المبلغ: *{order['price_egp']} جنيه*\n"
         f"🆔 Product ID: `{order['prod_id']}`\n\n"
         f"اضغط للموافقة أو الرفض:"
     )
@@ -810,7 +871,9 @@ async def handle_receipt(
         chat_id=ADMIN_ID,
         photo=update.message.photo[-1].file_id,
         caption=caption,
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
         parse_mode="Markdown"
     )
 
@@ -825,15 +888,12 @@ async def handle_receipt(
 # APPROVE ORDER
 # ============================================================
 
-
 async def approve_order(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
     query = update.callback_query
-
-    await query.answer()
 
     if query.from_user.id != ADMIN_ID:
 
@@ -843,6 +903,8 @@ async def approve_order(
         )
 
         return
+
+    await query.answer()
 
     user_id = int(
         query.data.split("_")[1]
@@ -907,11 +969,11 @@ async def approve_order(
             await context.bot.send_message(
                 chat_id=user_id,
                 text=(
-                    f"🎉 *تم تأكيد الدفع بنجاح!*\n\n"
+                    "🎉 *تم تأكيد الدفع بنجاح!*\n\n"
                     f"📦 المنتج: {order['product_name']}\n\n"
-                    f"📋 *البيانات/الكود الخاص بك:*\n"
+                    "📋 *البيانات/الكود الخاص بك:*\n"
                     f"`{delivered_key}`\n\n"
-                    f"شكراً لتعاملك معنا ❤️"
+                    "شكراً لتعاملك معنا ❤️"
                 ),
                 reply_markup=support_btn,
                 parse_mode="Markdown"
@@ -971,15 +1033,12 @@ async def approve_order(
 # REJECT ORDER
 # ============================================================
 
-
 async def reject_order(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
     query = update.callback_query
-
-    await query.answer()
 
     if query.from_user.id != ADMIN_ID:
 
@@ -990,13 +1049,16 @@ async def reject_order(
 
         return
 
+    await query.answer()
+
     user_id = int(
         query.data.split("_")[1]
     )
 
-    if user_id in pending_orders:
-
-        pending_orders.pop(user_id)
+    pending_orders.pop(
+        user_id,
+        None
+    )
 
     support_btn = InlineKeyboardMarkup([
         [
@@ -1028,7 +1090,6 @@ async def reject_order(
 # ADMIN PRICE PANEL
 # ============================================================
 
-
 async def prices_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
@@ -1042,15 +1103,13 @@ async def prices_command(
 
         return
 
-    await show_price_panel(
-        update.message,
-        context
+    await send_price_panel(
+        update.message
     )
 
 
-async def show_price_panel(
-    target,
-    context: ContextTypes.DEFAULT_TYPE
+async def send_price_panel(
+    message
 ):
 
     try:
@@ -1063,7 +1122,7 @@ async def show_price_panel(
 
         if res.status_code != 200:
 
-            await target.reply_text(
+            await message.reply_text(
                 "❌ تعذر جلب المنتجات من المتجر."
             )
 
@@ -1076,6 +1135,14 @@ async def show_price_panel(
             if isinstance(data, list)
             else data.get("products", [])
         )
+
+        if not products:
+
+            await message.reply_text(
+                "⚠️ لا توجد منتجات."
+            )
+
+            return
 
         keyboard = []
 
@@ -1097,7 +1164,7 @@ async def show_price_panel(
                 )
             )
 
-            automatic_price = calculate_price(
+            automatic_price = calculate_automatic_price(
                 price_usd
             )
 
@@ -1116,19 +1183,18 @@ async def show_price_panel(
                 mode = "🔄 تلقائي"
 
             short_name = (
-                name[:25] + "..."
-                if len(name) > 25
+                name[:24] + "..."
+                if len(name) > 24
                 else name
             )
 
             keyboard.append([
                 InlineKeyboardButton(
                     (
-                        f"📦 {short_name}\n"
-                        f"💰 {current_price} ج.م "
-                        f"| {mode}"
+                        f"📦 {short_name} | "
+                        f"{current_price} ج.م {mode}"
                     ),
-                    callback_data=f"price_{prod_id}"
+                    callback_data=f"manageprice_{prod_id}"
                 )
             ])
 
@@ -1139,11 +1205,13 @@ async def show_price_panel(
             )
         ])
 
-        await target.reply_text(
+        await message.reply_text(
             "⚙️ *إدارة أسعار المنتجات*\n\n"
-            "السعر التلقائي يعتمد على:\n"
+            f"💱 المعادلة الحالية:\n"
             f"`USD × {PROFIT_MARGIN} × {USD_TO_EGP}`\n\n"
-            "اضغط على المنتج لتعديل سعره أو إعادته للسعر التلقائي:",
+            "🔄 تلقائي = السعر محسوب بالمعادلة\n"
+            "✏️ يدوي = أنت حددت سعرًا خاصًا لهذا المنتج\n\n"
+            "اضغط على المنتج الذي تريد تعديل سعره:",
             reply_markup=InlineKeyboardMarkup(
                 keyboard
             ),
@@ -1153,27 +1221,24 @@ async def show_price_panel(
     except Exception:
 
         logger.exception(
-            "Error showing price panel"
+            "Error in send_price_panel"
         )
 
-        await target.reply_text(
-            "❌ حدث خطأ أثناء جلب الأسعار."
+        await message.reply_text(
+            "❌ حدث خطأ أثناء جلب قائمة الأسعار."
         )
 
 
 # ============================================================
-# PRICE PRODUCT
+# OPEN PRICE PRODUCT
 # ============================================================
 
-
-async def price_product(
+async def manage_price_product(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
     query = update.callback_query
-
-    await query.answer()
 
     if query.from_user.id != ADMIN_ID:
 
@@ -1184,10 +1249,18 @@ async def price_product(
 
         return
 
-    prod_id = query.data.split(
-        "_",
+    await query.answer()
+
+    prod_id = query.data.replace(
+        "manageprice_",
+        "",
         1
-    )[1]
+    )
+
+    logger.info(
+        "Admin opened price manager | product_id=%s",
+        prod_id
+    )
 
     try:
 
@@ -1199,9 +1272,9 @@ async def price_product(
 
         if res.status_code != 200:
 
-            await query.answer(
-                "تعذر جلب بيانات المنتج",
-                show_alert=True
+            await query.message.reply_text(
+                f"❌ تعذر جلب المنتج.\n"
+                f"HTTP {res.status_code}"
             )
 
             return
@@ -1220,7 +1293,7 @@ async def price_product(
             )
         )
 
-        automatic_price = calculate_price(
+        automatic_price = calculate_automatic_price(
             price_usd
         )
 
@@ -1230,16 +1303,16 @@ async def price_product(
                 prod_id
             ]
 
-            current_mode = "✏️ سعر يدوي"
+            mode = "✏️ سعر يدوي"
 
         else:
 
             current_price = automatic_price
 
-            current_mode = "🔄 سعر تلقائي"
+            mode = "🔄 سعر تلقائي"
 
         text = (
-            f"⚙️ *إدارة سعر المنتج*\n\n"
+            "⚙️ *إدارة سعر المنتج*\n\n"
             f"📦 *المنتج:* {name}\n"
             f"🆔 Product ID: `{prod_id}`\n\n"
             f"💵 سعر API: `${price_usd}`\n"
@@ -1247,21 +1320,21 @@ async def price_product(
             f"*{automatic_price} جنيه*\n"
             f"💰 السعر الحالي: "
             f"*{current_price} جنيه*\n"
-            f"📌 الوضع: *{current_mode}*\n\n"
-            f"اختر ما تريد:"
+            f"📌 الوضع: *{mode}*\n\n"
+            "اختر الإجراء:"
         )
 
         keyboard = [
             [
                 InlineKeyboardButton(
                     "✏️ تعديل السعر",
-                    callback_data=f"editprice_{prod_id}"
+                    callback_data=f"editmanual_{prod_id}"
                 )
             ],
             [
                 InlineKeyboardButton(
                     "🔄 استخدام السعر التلقائي",
-                    callback_data=f"autoprice_{prod_id}"
+                    callback_data=f"resetmanual_{prod_id}"
                 )
             ],
             [
@@ -1283,28 +1356,24 @@ async def price_product(
     except Exception:
 
         logger.exception(
-            "Error opening price product"
+            "Error in manage_price_product"
         )
 
-        await query.answer(
-            "حدث خطأ",
-            show_alert=True
+        await query.message.reply_text(
+            "❌ حدث خطأ أثناء فتح إعدادات السعر."
         )
 
 
 # ============================================================
-# EDIT PRICE
+# EDIT MANUAL PRICE
 # ============================================================
 
-
-async def edit_price(
+async def edit_manual_price(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
     query = update.callback_query
-
-    await query.answer()
 
     if query.from_user.id != ADMIN_ID:
 
@@ -1315,38 +1384,38 @@ async def edit_price(
 
         return
 
-    prod_id = query.data.split(
-        "_",
+    await query.answer()
+
+    prod_id = query.data.replace(
+        "editmanual_",
+        "",
         1
-    )[1]
+    )
 
     context.user_data[
         "editing_price"
     ] = prod_id
 
     await query.message.reply_text(
-        f"✏️ *تعديل سعر المنتج*\n\n"
+        "✏️ *تعديل سعر المنتج*\n\n"
         f"🆔 Product ID: `{prod_id}`\n\n"
-        f"أرسل الآن السعر الذي تريده بالجنيه المصري.\n\n"
-        f"مثال:\n"
-        f"`250`",
+        "أرسل الآن السعر الجديد بالجنيه المصري.\n\n"
+        "مثال:\n"
+        "`250`",
         parse_mode="Markdown"
     )
 
 
 # ============================================================
-# RESET TO AUTOMATIC
+# RESET MANUAL PRICE
 # ============================================================
 
-
-async def reset_auto_price(
+async def reset_manual_price(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE
 ):
 
     query = update.callback_query
-
-    await query.answer()
 
     if query.from_user.id != ADMIN_ID:
 
@@ -1357,47 +1426,22 @@ async def reset_auto_price(
 
         return
 
-    prod_id = query.data.split(
-        "_",
-        1
-    )[1]
-
-    if prod_id in manual_prices:
-
-        manual_prices.pop(
-            prod_id,
-            None
-        )
-
-        save_manual_prices()
-
-    if prod_id in products_cache:
-
-        try:
-
-            price_usd = products_cache[
-                prod_id
-            ].get(
-                "price_usd",
-                0
-            )
-
-            products_cache[
-                prod_id
-            ]["price_egp"] = calculate_price(
-                price_usd
-            )
-
-        except Exception:
-
-            pass
-
     await query.answer(
-        "✅ تم الرجوع للسعر التلقائي"
+        "✅ تم إرجاع السعر التلقائي"
     )
 
-    # إعادة فتح بطاقة السعر
-    fake_update = None
+    prod_id = query.data.replace(
+        "resetmanual_",
+        "",
+        1
+    )
+
+    manual_prices.pop(
+        prod_id,
+        None
+    )
+
+    save_manual_prices()
 
     try:
 
@@ -1407,79 +1451,85 @@ async def reset_auto_price(
             timeout=10
         )
 
-        if res.status_code == 200:
-
-            p_data = res.json()
-
-            name = p_data.get(
-                "name",
-                "منتج"
-            )
-
-            price_usd = float(
-                p_data.get(
-                    "price",
-                    0
-                )
-            )
-
-            automatic_price = calculate_price(
-                price_usd
-            )
-
-            text = (
-                f"⚙️ *إدارة سعر المنتج*\n\n"
-                f"📦 *المنتج:* {name}\n"
-                f"🆔 Product ID: `{prod_id}`\n\n"
-                f"💵 سعر API: `${price_usd}`\n"
-                f"🔄 السعر بالمعادلة: "
-                f"*{automatic_price} جنيه*\n"
-                f"💰 السعر الحالي: "
-                f"*{automatic_price} جنيه*\n"
-                f"📌 الوضع: *🔄 سعر تلقائي*\n\n"
-                f"اختر ما تريد:"
-            )
-
-            keyboard = [
-                [
-                    InlineKeyboardButton(
-                        "✏️ تعديل السعر",
-                        callback_data=f"editprice_{prod_id}"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "🔄 استخدام السعر التلقائي",
-                        callback_data=f"autoprice_{prod_id}"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "🔙 رجوع",
-                        callback_data="prices_back"
-                    )
-                ]
-            ]
+        if res.status_code != 200:
 
             await query.edit_message_text(
-                text,
-                reply_markup=InlineKeyboardMarkup(
-                    keyboard
-                ),
-                parse_mode="Markdown"
+                "✅ تم إلغاء السعر اليدوي.\n"
+                "🔄 المنتج الآن يستخدم السعر التلقائي."
             )
+
+            return
+
+        p_data = res.json()
+
+        name = p_data.get(
+            "name",
+            "منتج"
+        )
+
+        price_usd = float(
+            p_data.get(
+                "price",
+                0
+            )
+        )
+
+        automatic_price = calculate_automatic_price(
+            price_usd
+        )
+
+        text = (
+            "⚙️ *إدارة سعر المنتج*\n\n"
+            f"📦 *المنتج:* {name}\n"
+            f"🆔 Product ID: `{prod_id}`\n\n"
+            f"💵 سعر API: `${price_usd}`\n"
+            f"🔄 السعر بالمعادلة: "
+            f"*{automatic_price} جنيه*\n"
+            f"💰 السعر الحالي: "
+            f"*{automatic_price} جنيه*\n"
+            f"📌 الوضع: *🔄 سعر تلقائي*\n\n"
+            "اختر الإجراء:"
+        )
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✏️ تعديل السعر",
+                    callback_data=f"editmanual_{prod_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔄 استخدام السعر التلقائي",
+                    callback_data=f"resetmanual_{prod_id}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "🔙 رجوع",
+                    callback_data="prices_back"
+                )
+            ]
+        ]
+
+        await query.edit_message_text(
+            text,
+            reply_markup=InlineKeyboardMarkup(
+                keyboard
+            ),
+            parse_mode="Markdown"
+        )
 
     except Exception:
 
         logger.exception(
-            "Error resetting price"
+            "Error in reset_manual_price"
         )
 
 
 # ============================================================
-# PRICE PANEL CALLBACKS
+# BACK TO PRICE LIST
 # ============================================================
-
 
 async def prices_back(
     update: Update,
@@ -1487,8 +1537,6 @@ async def prices_back(
 ):
 
     query = update.callback_query
-
-    await query.answer()
 
     if query.from_user.id != ADMIN_ID:
 
@@ -1498,6 +1546,8 @@ async def prices_back(
         )
 
         return
+
+    await query.answer()
 
     try:
 
@@ -1543,7 +1593,7 @@ async def prices_back(
                 )
             )
 
-            automatic_price = calculate_price(
+            automatic_price = calculate_automatic_price(
                 price_usd
             )
 
@@ -1562,19 +1612,18 @@ async def prices_back(
                 mode = "🔄 تلقائي"
 
             short_name = (
-                name[:25] + "..."
-                if len(name) > 25
+                name[:24] + "..."
+                if len(name) > 24
                 else name
             )
 
             keyboard.append([
                 InlineKeyboardButton(
                     (
-                        f"📦 {short_name}\n"
-                        f"💰 {current_price} ج.م "
-                        f"| {mode}"
+                        f"📦 {short_name} | "
+                        f"{current_price} ج.م {mode}"
                     ),
-                    callback_data=f"price_{prod_id}"
+                    callback_data=f"manageprice_{prod_id}"
                 )
             ])
 
@@ -1587,7 +1636,7 @@ async def prices_back(
 
         await query.edit_message_text(
             "⚙️ *إدارة أسعار المنتجات*\n\n"
-            "اضغط على المنتج لتعديل سعره أو إعادته للسعر التلقائي:",
+            "اضغط على المنتج الذي تريد تعديله:",
             reply_markup=InlineKeyboardMarkup(
                 keyboard
             ),
@@ -1597,9 +1646,17 @@ async def prices_back(
     except Exception:
 
         logger.exception(
-            "Error returning to prices"
+            "Error returning to price list"
         )
 
+        await query.message.reply_text(
+            "❌ حدث خطأ أثناء الرجوع لقائمة الأسعار."
+        )
+
+
+# ============================================================
+# CLOSE PRICE PANEL
+# ============================================================
 
 async def price_close(
     update: Update,
@@ -1607,8 +1664,6 @@ async def price_close(
 ):
 
     query = update.callback_query
-
-    await query.answer()
 
     if query.from_user.id != ADMIN_ID:
 
@@ -1619,6 +1674,8 @@ async def price_close(
 
         return
 
+    await query.answer()
+
     await query.edit_message_text(
         "✅ تم إغلاق إدارة الأسعار."
     )
@@ -1627,7 +1684,6 @@ async def price_close(
 # ============================================================
 # BACK TO START
 # ============================================================
-
 
 async def back_to_start(
     update: Update,
@@ -1647,7 +1703,6 @@ async def back_to_start(
 # ============================================================
 # MAIN
 # ============================================================
-
 
 def main():
 
@@ -1703,27 +1758,27 @@ def main():
     )
 
     # ========================================================
-    # PRICE CALLBACKS
+    # PRICE MANAGEMENT CALLBACKS
     # ========================================================
 
     application.add_handler(
         CallbackQueryHandler(
-            price_product,
-            pattern=r"^price_"
+            manage_price_product,
+            pattern=r"^manageprice_"
         )
     )
 
     application.add_handler(
         CallbackQueryHandler(
-            edit_price,
-            pattern=r"^editprice_"
+            edit_manual_price,
+            pattern=r"^editmanual_"
         )
     )
 
     application.add_handler(
         CallbackQueryHandler(
-            reset_auto_price,
-            pattern=r"^autoprice_"
+            reset_manual_price,
+            pattern=r"^resetmanual_"
         )
     )
 
@@ -1742,7 +1797,7 @@ def main():
     )
 
     # ========================================================
-    # ORDERS / SUPPORT
+    # ORDER / SUPPORT CALLBACKS
     # ========================================================
 
     application.add_handler(
@@ -1788,7 +1843,7 @@ def main():
     )
 
     # ========================================================
-    # MESSAGES
+    # MESSAGE HANDLERS
     # ========================================================
 
     application.add_handler(
@@ -1806,7 +1861,18 @@ def main():
     )
 
     logger.info(
-        "Starting bot with automatic + manual product pricing..."
+        "Starting FastMedia bot..."
+    )
+
+    logger.info(
+        "Automatic pricing enabled: USD x %.2f x %.2f",
+        PROFIT_MARGIN,
+        USD_TO_EGP
+    )
+
+    logger.info(
+        "Manual prices loaded: %d",
+        len(manual_prices)
     )
 
     application.run_polling(
