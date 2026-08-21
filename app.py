@@ -86,7 +86,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         )
                     ])
 
-            # زر الدعم الفني الداخلي
             keyboard.append([
                 InlineKeyboardButton("🎧 تواصل مع الدعم الفني", callback_data="contact_support")
             ])
@@ -196,7 +195,7 @@ async def request_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_support_msg"] = True
     await query.edit_message_text(
         "✍️ *أهلاً بك في الدعم الفني!*\n\n"
-        "يرجى كتابة رسالتك أو استفسارك هنا في رسالة نصية، وسيتم تحويلها للإدارة والرد عليك مباشرة.",
+        "اكتب رسالتك أو استفسارك هنا، وسيتم إرسالها للإدارة للرد عليك مباشرة.",
         parse_mode="Markdown"
     )
 
@@ -205,7 +204,7 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
 
-    # إذا كان الأدمن يقوم بالرد على عميل
+    # رد الأدمن على رسالة العميل
     if user_id == ADMIN_ID and context.user_data.get("replying_to_user"):
         target_client_id = context.user_data.pop("replying_to_user")
         try:
@@ -219,7 +218,7 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ تعذر إرسال الرد، ربما قام العميل بحظر البوت.")
         return
 
-    # إذا كان العميل يرسل رسالة للدعم
+    # إرسال رسالة العميل إلى الأدمن
     if context.user_data.get("waiting_support_msg"):
         context.user_data["waiting_support_msg"] = False
         username = update.effective_user.username or update.effective_user.first_name
@@ -239,7 +238,7 @@ async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_btn,
             parse_mode="Markdown"
         )
-        await update.message.reply_text("✅ تم إرسال رسالتك إلى الدعم الفني، وسيتم الرد عليك في أقرب وقت.")
+        await update.message.reply_text("✅ تم إرسال رسالتك إلى الدعم الفني، وسيتم الرد عليك هنا فوراً.")
 
 
 async def start_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
