@@ -1,454 +1,161 @@
 import logging
 import os
 import requests
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters,
+    Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 )
 
 # ============================================================
-# LOGGING
-# ============================================================
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
-logger = logging.getLogger("fastmedia_bot")
-
-# ============================================================
-# CONFIG
+# CONFIGURATION
 # ============================================================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 BITE_STORE_API_KEY = os.getenv("BITE_STORE_API_KEY")
 BASE_URL = "https://bite-store-bot-production.up.railway.app"
-
 ADMIN_ID = 8079213467
 
-USD_TO_EGP = 53.0
-PROFIT_MARGIN = 2.0
+# بيانات تعديلات الأدمن (مخزنة مؤقتاً في الذاكرة)
+admin_edits = {"prices": {}, "descs": {}}
 
-HEADERS = {
-    "X-API-Key": BITE_STORE_API_KEY,
-    "Content-Type": "application/json"
-}
+HEADERS = {"X-API-Key": BITE_STORE_API_KEY, "Content-Type": "application/json"}
+PAYMENT_INFO = ("💳 *طرق الدفع:* فودافون كاش 01096056061\n⚡ إنستاباي 01559740555\n\n⚠️ أرسل صورة الإيصال بعد التحويل.")
 
-PAYMENT_INFO = (
-    "💳 *طرق الدفع المتاحة:*\n\n"
-    "📱 *فودافون كاش:* `01096056061`\n"
-    "⚡ *إنستاباي:* `01559740555`\n\n"
-    "⚠️ بعد التحويل اضغط على زر إرسال الإيصال بالأسفل وأرسل صورة التحويل."
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+logger = logging.getLogger("fastmedia_bot")
 
 pending_orders = {}
 products_cache = {}
 
+# ============================================================
+# UTILS
+# ============================================================
+async def post_init(application: Application):
+    await application.bot.set_my_commands([BotCommand("start", "🛒 فتح المتجر")])
 
+def get_final_price(prod_id, original_price_usd):
+    if str(prod_id) in admin_edits["prices"]:
+        return admin_edits["prices"][str(prod_id)]
+    return round(float(original_price_usd) * 2.0 * 53.0)
+
+# ============================================================
+# HANDLERS
+# ============================================================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_target = update.message if update.message else update.callback_query.message
-    status_msg = await msg_target.reply_text("⏳ جاري جلب المنتجات والأسعار...")
-
-    try:
-        res = requests.get(f"{BASE_URL}/v1/products", headers=HEADERS, timeout=12)
-        if res.status_code == 200:
-            data = res.json()
-            products = data if isinstance(data, list) else data.get("products", [])
-            keyboard = []
-            products_cache.clear()
-
-            for prod in products:
-                price_usd = float(prod.get("price", 0))
-                price_egp = round(price_usd * PROFIT_MARGIN * USD_TO_EGP)
-                stock = prod.get("stock", 0)
-                name = prod.get("name", "Product")
-                prod_id = str(prod.get("id"))
-
-                if stock > 0:
-                    products_cache[prod_id] = {
-                        "name": name,
-                        "price_egp": price_egp,
-                        "stock": stock
-                    }
-                    short_name = name[:28] + "..." if len(name) > 28 else name
-                    btn_text = f"✨ {short_name} | {price_egp} ج.م"
-                    keyboard.append([
-                        InlineKeyboardButton(
-                            btn_text,
-                            callback_data=f"view_{prod_id}"
-                        )
-                    ])
-
-            keyboard.append([
-                InlineKeyboardButton("🎧 تواصل مع الدعم الفني", callback_data="contact_support")
-            ])
-
-            if len(keyboard) > 1:
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await status_msg.edit_text(
-                    "🛍️ *أهلاً بك في متجر Fastmedia Store*\n\n"
-                    "اختر المنتج المطلوب لعرض التفاصيل والمواصفات 👇",
-                    reply_markup=reply_markup,
-                    parse_mode="Markdown"
-                )
-            else:
-                await status_msg.edit_text("⚠️ لا توجد منتجات متوفرة حالياً.")
-        else:
-            await status_msg.edit_text("❌ تعذر الاتصال بالمتجر، يرجى المحاولة لاحقاً.")
-    except Exception:
-        logger.exception("Error in /start")
-        await status_msg.edit_text("❌ حدث خطأ أثناء الاتصال بالخادم.")
-
+    res = requests.get(f"{BASE_URL}/v1/products", headers=HEADERS, timeout=12)
+    if res.status_code == 200:
+        products = res.json()
+        keyboard = []
+        for prod in products:
+            p_id = str(prod.get("id"))
+            name = prod.get("name")
+            price = get_final_price(p_id, prod.get("price", 0))
+            products_cache[p_id] = {"name": name, "price": price}
+            keyboard.append([InlineKeyboardButton(f"{name} | {price} ج.م", callback_data=f"view_{p_id}")])
+        keyboard.append([InlineKeyboardButton("🎧 تواصل مع الدعم الفني", callback_data="contact_support")])
+        await msg_target.reply_text("🛍️ *أهلاً بك في المتجر*", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     prod_id = query.data.split("_")[1]
-    cached = products_cache.get(prod_id, {})
+    
+    res = requests.get(f"{BASE_URL}/v1/products/{prod_id}", headers=HEADERS, timeout=5)
+    p = res.json()
+    name = p.get("name")
+    desc = admin_edits["descs"].get(str(prod_id), p.get("description", "تسليم فوري ومضمون"))
+    price = get_final_price(prod_id, p.get("price", 0))
+    stock = p.get("stock", 0)
 
-    name = cached.get("name", "منتج رقمي")
-    price_egp = cached.get("price_egp", 0)
-    stock_count = cached.get("stock", 1)
-    description = "تسليم فوري وبيانات رسمية ومضمونة بأعلى جودة."
-    delivery_type = "توصيل تلقائي 🤖"
-    format_type = "بيانات مباشرة 📎"
-    sold_count = "0"
+    text = f"📦 *{name}*\n📝 {desc}\n💰 *السعر:* `{price} ج.م`\n📊 *المتوفر:* {stock}"
+    kb = [[InlineKeyboardButton("🛍️ شراء الآن", callback_data=f"buy_{prod_id}")]]
+    
+    if query.from_user.id == ADMIN_ID:
+        kb.append([InlineKeyboardButton("✏️ تعديل السعر", callback_data=f"edit_price_{prod_id}"), 
+                   InlineKeyboardButton("✏️ تعديل الوصف", callback_data=f"edit_desc_{prod_id}")])
+    
+    kb.append([InlineKeyboardButton("🎧 دعم فني", callback_data="contact_support"), InlineKeyboardButton("🔙 رجوع", callback_data="back")])
+    await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
-    try:
-        res = requests.get(f"{BASE_URL}/v1/products/{prod_id}", headers=HEADERS, timeout=10)
-        if res.status_code == 200:
-            p_data = res.json()
-            description = p_data.get("description") or p_data.get("desc") or description
-            delivery_type = p_data.get("delivery_type") or p_data.get("type") or delivery_type
-            format_type = p_data.get("format") or format_type
-            sold_count = str(p_data.get("sold", p_data.get("sold_count", "0")))
-            stock_count = p_data.get("stock", stock_count)
-            name = p_data.get("name", name)
-            if not price_egp:
-                price_usd = float(p_data.get("price", 0))
-                price_egp = round(price_usd * PROFIT_MARGIN * USD_TO_EGP)
-    except Exception:
-        pass
+# التعامل مع تعديلات الأدمن
+async def edit_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    action, prod_id = query.data.split("_")[1], query.data.split("_")[2]
+    context.user_data["editing"] = {"action": action, "prod_id": prod_id}
+    await query.message.reply_text(f"✍️ اكتب {'السعر الجديد' if action == 'price' else 'الوصف الجديد'}:")
 
-    products_cache[prod_id] = {
-        "name": name,
-        "price_egp": price_egp,
-        "stock": stock_count,
-        "desc": description
-    }
+async def handle_admin_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.user_data.get("editing"): return
+    edit = context.user_data.pop("editing")
+    if edit["action"] == "price": admin_edits["prices"][edit["prod_id"]] = int(update.message.text)
+    else: admin_edits["descs"][edit["prod_id"]] = update.message.text
+    await update.message.reply_text("✅ تم التحديث بنجاح.")
 
-    # تصميم الكارت باسم المنتج وسعرك بالجنيه فقط
-    card_text = (
-        f"📦 *{name}*\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📝 {description}\n\n"
-        f"💰 *السعر:* *{price_egp} جنيه مصري*\n"
-        f"🚦 *الحالة:* ✅ متوفر للتسليم الفوري\n"
-        f"📦 *نوع التسليم:* {delivery_type}\n"
-        f"🧩 *طريقة الاستلام:* {format_type}\n"
-        f"📊 *المتوفر بالمخزون:* {stock_count}\n"
-        f"🔥 *عدد مرات البيع:* {sold_count}\n"
-        f"━━━━━━━━━━━━━━━━━━━━"
-    )
+# نظام الدعم الفني
+async def request_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    context.user_data["waiting_support"] = True
+    await update.callback_query.message.reply_text("✍️ اكتب استفسارك هنا:")
 
-    keyboard = [
-        [InlineKeyboardButton("🛍️ شراء الآن | Buy Now", callback_data=f"buy_{prod_id}")],
-        [InlineKeyboardButton("🎧 استفسار / الدعم الفني", callback_data="contact_support")],
-        [InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back")]
-    ]
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id == ADMIN_ID and context.user_data.get("replying"):
+        target = context.user_data.pop("replying")
+        await context.bot.send_message(chat_id=target, text=f"💬 *رد الدعم:* {update.message.text}", parse_mode="Markdown")
+        await update.message.reply_text("✅ تم الرد.")
+    elif context.user_data.get("waiting_support"):
+        context.user_data["waiting_support"] = False
+        kb = [[InlineKeyboardButton("↩️ الرد على العميل", callback_data=f"reply_to_{update.effective_user.id}")]]
+        await context.bot.send_message(chat_id=ADMIN_ID, text=f"📩 رسالة من @{update.effective_user.username}: {update.message.text}", reply_markup=InlineKeyboardMarkup(kb))
+        await update.message.reply_text("✅ تم إرسال رسالتك.")
 
-    await query.edit_message_text(card_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+async def start_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["replying"] = int(query.data.split("_")[2])
+    await query.message.reply_text("✍️ اكتب الرد:")
 
-
+# إيصالات الطلبات
 async def buy_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     prod_id = query.data.split("_")[1]
-    prod = products_cache.get(prod_id)
-
-    if not prod:
-        await query.edit_message_text("⚠️ انتهت صلاحية الجلسة، ابدأ من جديد بـ /start")
-        return
-
-    user_id = query.from_user.id
-    pending_orders[user_id] = {
-        "prod_id": prod_id,
-        "price_egp": prod["price_egp"],
-        "product_name": prod["name"],
-        "username": query.from_user.username or query.from_user.first_name,
-    }
-
-    msg = (
-        f"🛒 *تأكيد طلب الشراء:*\n\n"
-        f"📦 *المنتج:* {prod['name']}\n"
-        f"💵 *المبلغ المطلوب:* *{prod['price_egp']} جنيه مصري*\n\n"
-        f"{PAYMENT_INFO}"
-    )
-    keyboard = [
-        [InlineKeyboardButton("📤 لقد قمت بالتحويل - إرسال الإيصال", callback_data="send_receipt")],
-        [InlineKeyboardButton("🔙 رجوع لتفاصيل المنتج", callback_data=f"view_{prod_id}")]
-    ]
-    await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
-
-
-async def ask_for_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    user_id = query.from_user.id
-    if user_id not in pending_orders:
-        await query.edit_message_text("⚠️ انتهت صلاحية الطلب، ابدأ من جديد بـ /start")
-        return
-
-    await query.edit_message_text(
-        "📸 *من فضلك أرسل صورة إيصال التحويل الآن.*\n\n"
-        "بعد إرسال الصورة سيتم مراجعتها من الإدارة، وستصلك البيانات فور الموافقة.",
-        parse_mode="Markdown"
-    )
-    context.user_data["waiting_receipt"] = True
-
-
-async def request_support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    context.user_data["waiting_support_msg"] = True
-    await query.edit_message_text(
-        "✍️ *أهلاً بك في الدعم الفني!*\n\n"
-        "اكتب رسالتك أو استفسارك هنا في الشات، وسيتم إرسالها للإدارة للرد عليك مباشرة.",
-        parse_mode="Markdown"
-    )
-
-
-async def handle_user_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = update.message.text
-
-    # رد الأدمن على العميل
-    if user_id == ADMIN_ID and context.user_data.get("replying_to_user"):
-        target_client_id = context.user_data.pop("replying_to_user")
-        try:
-            await context.bot.send_message(
-                chat_id=target_client_id,
-                text=f"💬 *رد الدعم الفني:*\n\n{text}",
-                parse_mode="Markdown"
-            )
-            await update.message.reply_text("✅ تم إرسال ردك إلى العميل بنجاح.")
-        except Exception:
-            await update.message.reply_text("❌ تعذر إرسال الرد، ربما قام العميل بحظر البوت.")
-        return
-
-    # إرسال رسالة العميل إلى الأدمن
-    if context.user_data.get("waiting_support_msg"):
-        context.user_data["waiting_support_msg"] = False
-        username = update.effective_user.username or update.effective_user.first_name
-
-        admin_msg = (
-            f"📩 *رسالة دعم فني جديدة*\n\n"
-            f"👤 العميل: @{username} (`{user_id}`)\n"
-            f"💬 نص الرسالة:\n{text}"
-        )
-        reply_btn = InlineKeyboardMarkup([
-            [InlineKeyboardButton("↩️ الرد على العميل", callback_data=f"reply_to_{user_id}")]
-        ])
-
-        await context.bot.send_message(
-            chat_id=ADMIN_ID,
-            text=admin_msg,
-            reply_markup=reply_btn,
-            parse_mode="Markdown"
-        )
-        await update.message.reply_text("✅ تم إرسال استفسارك إلى الدعم الفني، وسيصلك الرد هنا مباشرة.")
-
-
-async def start_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await query.answer("غير مصرح لك", show_alert=True)
-        return
-
-    client_id = int(query.data.split("_")[2])
-    context.user_data["replying_to_user"] = client_id
-
-    await query.message.reply_text(f"✍️ اكتب الآن نص الرد الذي تريد إرساله للعميل `{client_id}`:")
-
+    pending_orders[query.from_user.id] = prod_id
+    await query.edit_message_text(f"🛒 تأكيد الدفع:\n{PAYMENT_INFO}\n\nأرسل صورة الإيصال.", parse_mode="Markdown")
 
 async def handle_receipt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-
-    if not context.user_data.get("waiting_receipt"):
-        return
-
-    if user_id not in pending_orders:
-        await update.message.reply_text("⚠️ انتهت صلاحية الطلب، ابدأ من جديد بـ /start")
-        context.user_data["waiting_receipt"] = False
-        return
-
-    order = pending_orders[user_id]
-    context.user_data["waiting_receipt"] = False
-
-    caption = (
-        f"🧾 *طلب جديد بانتظار المراجعة*\n\n"
-        f"👤 العميل: @{order['username']} (`{user_id}`)\n"
-        f"📦 المنتج: {order['product_name']}\n"
-        f"💵 المبلغ: *{order['price_egp']} جنيه*\n"
-        f"🆔 Product ID: `{order['prod_id']}`\n\n"
-        f"اضغط للموافقة أو الرفض:"
-    )
-
-    keyboard = [
-        [
-            InlineKeyboardButton("✅ موافقة وإرسال المنتج", callback_data=f"approve_{user_id}"),
-            InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")
-        ]
-    ]
-
-    await context.bot.send_photo(
-        chat_id=ADMIN_ID,
-        photo=update.message.photo[-1].file_id,
-        caption=caption,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown"
-    )
-
-    await update.message.reply_text(
-        "✅ تم استلام الإيصال بنجاح.\n"
-        "⏳ جاري مراجعة الدفع من الإدارة...\n"
-        "هتوصلك البيانات فور الموافقة."
-    )
-
+    if user_id not in pending_orders: return
+    kb = [[InlineKeyboardButton("✅ موافقة", callback_data=f"approve_{user_id}"), InlineKeyboardButton("❌ رفض", callback_data=f"reject_{user_id}")]]
+    await context.bot.send_photo(chat_id=ADMIN_ID, photo=update.message.photo[-1].file_id, caption=f"🧾 طلب من {user_id}", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text("✅ تم إرسال الإيصال.")
 
 async def approve_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await query.answer("غير مصرح لك", show_alert=True)
-        return
-
     user_id = int(query.data.split("_")[1])
+    prod_id = pending_orders.pop(user_id)
+    res = requests.post(f"{BASE_URL}/v1/orders", json={"product_id": int(prod_id)}, headers=HEADERS)
+    if res.status_code == 200:
+        await context.bot.send_message(chat_id=user_id, text=f"🎉 تم القبول. بياناتك: `{res.json().get('delivered_data')}`", parse_mode="Markdown")
+        await query.edit_message_caption(caption="✅ تم.")
 
-    if user_id not in pending_orders:
-        await query.edit_message_caption(caption="⚠️ هذا الطلب انتهت صلاحيته أو تم التعامل معه مسبقاً.")
-        return
-
-    order = pending_orders[user_id]
-    prod_id = order["prod_id"]
-
-    await query.edit_message_caption(caption="⏳ جاري سحب المنتج وإرساله للعميل...")
-
-    try:
-        payload = {"product_id": int(prod_id) if str(prod_id).isdigit() else prod_id}
-        res = requests.post(f"{BASE_URL}/v1/orders", json=payload, headers=HEADERS, timeout=15)
-
-        if res.status_code == 200:
-            order_data = res.json()
-            delivered_key = (
-                order_data.get("delivered_data")
-                or order_data.get("key")
-                or order_data.get("item")
-                or "تم تنفيذ طلبك بنجاح!"
-            )
-
-            support_btn = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", callback_data="contact_support")]
-            ])
-
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=(
-                    f"🎉 *تم تأكيد الدفع بنجاح!*\n\n"
-                    f"📦 المنتج: {order['product_name']}\n\n"
-                    f"📋 *البيانات/الكود الخاص بك:*\n`{delivered_key}`\n\n"
-                    f"شكراً لتعاملك معنا ❤️"
-                ),
-                reply_markup=support_btn,
-                parse_mode="Markdown"
-            )
-
-            await query.edit_message_caption(
-                caption=f"✅ تم الموافقة وإرسال المنتج للعميل `{user_id}` بنجاح."
-            )
-        else:
-            support_btn = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎧 تواصل مع الدعم الفني", callback_data="contact_support")]
-            ])
-            await context.bot.send_message(
-                chat_id=user_id,
-                text="❌ حدثت مشكلة أثناء سحب المنتج. يرجى الضغط بالأسفل للتواصل مع الدعم.",
-                reply_markup=support_btn
-            )
-            await query.edit_message_caption(
-                caption="❌ فشل سحب المنتج من المتجر (تأكد من الرصيد أو الكمية)."
-            )
-    except Exception:
-        logger.exception("Error approving order")
-        await query.edit_message_caption(caption="❌ حصل خطأ أثناء تنفيذ الطلب.")
-
-    pending_orders.pop(user_id, None)
-
-
-async def reject_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.from_user.id != ADMIN_ID:
-        await query.answer("غير مصرح لك", show_alert=True)
-        return
-
-    user_id = int(query.data.split("_")[1])
-
-    if user_id in pending_orders:
-        pending_orders.pop(user_id)
-
-    support_btn = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎧 تواصل مع الإدارة", callback_data="contact_support")]
-    ])
-
-    await context.bot.send_message(
-        chat_id=user_id,
-        text="❌ عذراً، تم رفض إيصال الدفع.\nإذا كان هناك خطأ تواصل مع الإدارة مباشرة.",
-        reply_markup=support_btn
-    )
-
-    await query.edit_message_caption(caption=f"❌ تم رفض الطلب الخاص بالعميل `{user_id}`.")
-
-
-async def back_to_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await start(update, context)
-
-
+# ============================================================
+# MAIN
+# ============================================================
 def main():
-    if not TELEGRAM_TOKEN or not BITE_STORE_API_KEY:
-        logger.error("TELEGRAM_TOKEN or BITE_STORE_API_KEY is missing!")
-        return
-
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(view_product, pattern=r"^view_"))
-    application.add_handler(CallbackQueryHandler(buy_product, pattern=r"^buy_"))
-    application.add_handler(CallbackQueryHandler(ask_for_receipt, pattern=r"^send_receipt$"))
-    application.add_handler(CallbackQueryHandler(request_support, pattern=r"^contact_support$"))
-    application.add_handler(CallbackQueryHandler(start_admin_reply, pattern=r"^reply_to_"))
-    application.add_handler(CallbackQueryHandler(approve_order, pattern=r"^approve_"))
-    application.add_handler(CallbackQueryHandler(reject_order, pattern=r"^reject_"))
-    application.add_handler(CallbackQueryHandler(back_to_start, pattern=r"^back$"))
-    application.add_handler(MessageHandler(filters.PHOTO, handle_receipt))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_text))
-
-    logger.info("Starting bot with perfected product card and live support...")
-    application.run_polling(drop_pending_updates=True)
-
+    app = Application.builder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(view_product, pattern=r"^view_"))
+    app.add_handler(CallbackQueryHandler(buy_product, pattern=r"^buy_"))
+    app.add_handler(CallbackQueryHandler(edit_callback, pattern=r"^edit_"))
+    app.add_handler(CallbackQueryHandler(start_reply, pattern=r"^reply_to_"))
+    app.add_handler(CallbackQueryHandler(approve_order, pattern=r"^approve_"))
+    app.add_handler(CallbackQueryHandler(request_support, pattern=r"^contact_support$"))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_receipt))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.TEXT & filters.REPLY, handle_admin_edit))
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
