@@ -1118,10 +1118,6 @@ async def send_price_panel(
 
         await message.reply_text(
             "⚙️ *إدارة أسعار المنتجات*\n\n"
-            f"💱 المعادلة الحالية:\n"
-            f"`USD × {PROFIT_MARGIN} × {USD_TO_EGP}`\n\n"
-            "🔄 تلقائي = السعر محسوب بالمعادلة\n"
-            "✏️ يدوي = أنت حددت سعرًا خاصًا لهذا المنتج\n\n"
             "اضغط على المنتج الذي تريد تعديل سعره:",
             reply_markup=InlineKeyboardMarkup(
                 keyboard
@@ -1215,8 +1211,7 @@ async def manage_price_product(update, context):
 
         await query.message.reply_text(
             f"📦 {product.get('name', 'بدون اسم')}\n\n"
-            f"💵 السعر الأساسي: ${price_usd:.2f}\n"
-            f"💰 سعر البيع: {price_egp:.2f} جنيه\n"
+            f"💰 سعر البيع الحالي: {price_egp} جنيه\n"
             f"📌 نوع السعر: {price_type}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
