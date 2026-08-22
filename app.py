@@ -36,8 +36,8 @@ BASE_URL = "https://bite-store-bot-production.up.railway.app"
 
 ADMIN_ID = 8079213467
 
-USD_TO_EGP = 53.0
-PROFIT_MARGIN = 2.0
+# زيادة 50% من السعر الأصلي
+PROFIT_MARGIN = 1.50
 
 
 # ============================================================
@@ -129,15 +129,10 @@ products_cache = {}
 
 def calculate_automatic_price(price_usd):
     """
-    السعر التلقائي:
-    USD × PROFIT_MARGIN × USD_TO_EGP
+    السعر التلقائي مع زيادة 50%:
+    USD × 1.50
     """
-
-    return round(
-        float(price_usd)
-        * PROFIT_MARGIN
-        * USD_TO_EGP
-    )
+    return round(float(price_usd) * PROFIT_MARGIN, 2)
 
 
 def get_product_price(prod_id, price_usd):
@@ -145,18 +140,12 @@ def get_product_price(prod_id, price_usd):
     إذا كان هناك سعر يدوي يستخدمه.
     غير ذلك يستخدم المعادلة التلقائية.
     """
-
     prod_id = str(prod_id)
 
     if prod_id in manual_prices:
+        return float(manual_prices[prod_id])
 
-        return int(
-            manual_prices[prod_id]
-        )
-
-    return calculate_automatic_price(
-        price_usd
-    )
+    return calculate_automatic_price(price_usd)
 
 
 # ============================================================
@@ -208,38 +197,21 @@ async def start(
 
         for prod in products:
 
-            prod_id = str(
-                prod.get("id")
-            )
+            prod_id = str(prod.get("id"))
+            name = prod.get("name", "Product")
+            price_usd_original = float(prod.get("price", 0))
+            stock = prod.get("stock", 0)
 
-            name = prod.get(
-                "name",
-                "Product"
-            )
-
-            price_usd = float(
-                prod.get(
-                    "price",
-                    0
-                )
-            )
-
-            stock = prod.get(
-                "stock",
-                0
-            )
-
-            price_egp = get_product_price(
+            price_usd_final = get_product_price(
                 prod_id,
-                price_usd
+                price_usd_original
             )
 
             if stock > 0:
 
                 products_cache[prod_id] = {
                     "name": name,
-                    "price_egp": price_egp,
-                    "price_usd": price_usd,
+                    "price_usd": price_usd_final,
                     "stock": stock
                 }
 
@@ -251,7 +223,7 @@ async def start(
 
                 keyboard.append([
                     InlineKeyboardButton(
-                        f"✨ {short_name} | {price_egp} ج.م",
+                        f"✨ {short_name} | ${price_usd_final:.2f}",
                         callback_data=f"view_{prod_id}"
                     )
                 ])
@@ -302,7 +274,6 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prod_id = str(query.data.split("_")[-1])
         product = products_cache.get(prod_id)
 
-        # في حالة إعادة تشغيل البوت وفراغ الكاش يتم جلب البيانات تلقائياً
         if not product:
             res = requests.get(
                 f"{BASE_URL}/v1/products",
@@ -314,14 +285,13 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 products = data if isinstance(data, list) else data.get("products", [])
                 for p in products:
                     pid = str(p.get("id"))
-                    p_usd = float(p.get("price", 0))
+                    p_usd_orig = float(p.get("price", 0))
                     p_stock = p.get("stock", 0)
-                    p_egp = get_product_price(pid, p_usd)
+                    p_usd_final = get_product_price(pid, p_usd_orig)
                     if p_stock > 0:
                         products_cache[pid] = {
                             "name": p.get("name", "Product"),
-                            "price_egp": p_egp,
-                            "price_usd": p_usd,
+                            "price_usd": p_usd_final,
                             "stock": p_stock
                         }
                 product = products_cache.get(prod_id)
@@ -331,12 +301,12 @@ async def view_product(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         name = product.get("name", "بدون اسم")
-        price_egp = product.get("price_egp", 0)
+        price_usd = product.get("price_usd", 0.0)
         stock = product.get("stock", 0)
 
         text = (
             f"📦 <b>{name}</b>\n\n"
-            f"💰 السعر: <b>{price_egp} جنيه</b>\n"
+            f"💰 السعر: <b>${price_usd:.2f}</b>\n"
             f"📊 المتوفر بالمخزون: <b>{stock}</b>"
         )
 
@@ -386,14 +356,9 @@ async def buy_product(
 
     await query.answer()
 
-    prod_id = query.data.split(
-        "_",
-        1
-    )[1]
+    prod_id = query.data.split("_", 1)[1]
 
-    prod = products_cache.get(
-        prod_id
-    )
+    prod = products_cache.get(prod_id)
 
     if not prod:
 
@@ -407,7 +372,7 @@ async def buy_product(
 
     pending_orders[user_id] = {
         "prod_id": prod_id,
-        "price_egp": prod["price_egp"],
+        "price_usd": prod["price_usd"],
         "product_name": prod["name"],
         "username": (
             query.from_user.username
@@ -419,7 +384,7 @@ async def buy_product(
         f"🛒 *تأكيد طلب الشراء:*\n\n"
         f"📦 *المنتج:* {prod['name']}\n"
         f"💵 *المبلغ المطلوب:* "
-        f"*{prod['price_egp']} جنيه مصري*\n\n"
+        f"*${prod['price_usd']:.2f}*\n\n"
         f"{PAYMENT_INFO}"
     )
 
@@ -592,16 +557,14 @@ async def handle_user_text(
 
                 await update.message.reply_text(
                     "❌ السعر يجب أن يكون أكبر من صفر.\n\n"
-                    "أرسل السعر مرة أخرى، مثال:\n"
-                    "`250`",
+                    "أرسل السعر بالدولار مرة أخرى، مثال:\n"
+                    "`5.50`",
                     parse_mode="Markdown"
                 )
 
                 return
 
-            new_price = int(
-                round(new_price)
-            )
+            new_price = round(new_price, 2)
 
             manual_prices[
                 str(prod_id)
@@ -610,15 +573,12 @@ async def handle_user_text(
             save_manual_prices()
 
             if prod_id in products_cache:
-
-                products_cache[
-                    prod_id
-                ]["price_egp"] = new_price
+                products_cache[prod_id]["price_usd"] = new_price
 
             await update.message.reply_text(
                 "✅ *تم تعديل السعر بنجاح*\n\n"
                 f"🆔 Product ID: `{prod_id}`\n"
-                f"💰 السعر الجديد: *{new_price} جنيه*\n\n"
+                f"💰 السعر الجديد: *${new_price:.2f}*\n\n"
                 "📌 هذا المنتج أصبح يستخدم السعر اليدوي.\n"
                 "باقي المنتجات ستظل على السعر التلقائي.",
                 parse_mode="Markdown"
@@ -632,8 +592,8 @@ async def handle_user_text(
 
             await update.message.reply_text(
                 "❌ السعر غير صحيح.\n\n"
-                "أرسل رقم السعر فقط، مثال:\n"
-                "`250`",
+                "أرسل رقم السعر بالدولار فقط، مثال:\n"
+                "`5.50`",
                 parse_mode="Markdown"
             )
 
@@ -760,7 +720,7 @@ async def handle_receipt(
         f"🧾 *طلب جديد بانتظار المراجعة*\n\n"
         f"👤 العميل: @{order['username']} (`{user_id}`)\n"
         f"📦 المنتج: {order['product_name']}\n"
-        f"💵 المبلغ: *{order['price_egp']} جنيه*\n"
+        f"💵 المبلغ: *${order['price_usd']:.2f}*\n"
         f"🆔 Product ID: `{order['prod_id']}`\n\n"
         f"اضغط للموافقة أو الرفض:"
     )
@@ -1059,38 +1019,17 @@ async def send_price_panel(
 
         for prod in products:
 
-            prod_id = str(
-                prod.get("id")
-            )
+            prod_id = str(prod.get("id"))
+            name = prod.get("name", "Product")
+            price_usd_original = float(prod.get("price", 0))
 
-            name = prod.get(
-                "name",
-                "Product"
-            )
-
-            price_usd = float(
-                prod.get(
-                    "price",
-                    0
-                )
-            )
-
-            automatic_price = calculate_automatic_price(
-                price_usd
-            )
+            automatic_price = calculate_automatic_price(price_usd_original)
 
             if prod_id in manual_prices:
-
-                current_price = manual_prices[
-                    prod_id
-                ]
-
+                current_price = manual_prices[prod_id]
                 mode = "✏️ يدوي"
-
             else:
-
                 current_price = automatic_price
-
                 mode = "🔄 تلقائي"
 
             short_name = (
@@ -1101,10 +1040,7 @@ async def send_price_panel(
 
             keyboard.append([
                 InlineKeyboardButton(
-                    (
-                        f"📦 {short_name} | "
-                        f"{current_price} ج.م {mode}"
-                    ),
+                    f"📦 {short_name} | ${current_price:.2f} {mode}",
                     callback_data=f"manageprice_{prod_id}"
                 )
             ])
@@ -1175,18 +1111,18 @@ async def manage_price_product(update, context):
             await query.message.reply_text("❌ المنتج غير موجود.")
             return
 
-        price_usd = float(
+        price_usd_original = float(
             product.get("price_usd")
             or product.get("price")
             or 0
         )
 
         if str(prod_id) in manual_prices:
-            price_egp = manual_prices[str(prod_id)]
+            price_usd_final = manual_prices[str(prod_id)]
             price_type = "✏️ سعر يدوي"
         else:
-            price_egp = calculate_automatic_price(price_usd)
-            price_type = "🤖 سعر تلقائي"
+            price_usd_final = calculate_automatic_price(price_usd_original)
+            price_type = "🤖 سعر تلقائي (+50%)"
 
         keyboard = [
             [
@@ -1211,7 +1147,7 @@ async def manage_price_product(update, context):
 
         await query.message.reply_text(
             f"📦 {product.get('name', 'بدون اسم')}\n\n"
-            f"💰 سعر البيع الحالي: {price_egp} جنيه\n"
+            f"💰 سعر البيع الحالي: ${price_usd_final:.2f}\n"
             f"📌 نوع السعر: {price_type}",
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
@@ -1254,9 +1190,9 @@ async def edit_manual_price(
     await query.message.reply_text(
         "✏️ *تعديل سعر المنتج*\n\n"
         f"🆔 Product ID: `{prod_id}`\n\n"
-        "أرسل الآن السعر الجديد بالجنيه المصري.\n\n"
+        "أرسل الآن السعر الجديد بالدولار ($).\n\n"
         "مثال:\n"
-        "`250`",
+        "`5.50`",
         parse_mode="Markdown"
     )
 
@@ -1296,7 +1232,7 @@ async def reset_manual_price(
 
     await query.message.reply_text(
         "✅ تم إلغاء السعر اليدوي بنجاح.\n"
-        "🔄 المنتج الآن يستخدم السعر التلقائي بالمعادلة."
+        "🔄 المنتج الآن يستخدم السعر التلقائي بالمعادلة (+50%)."
     )
 
 
@@ -1350,38 +1286,17 @@ async def prices_back(
 
         for prod in products:
 
-            prod_id = str(
-                prod.get("id")
-            )
+            prod_id = str(prod.get("id"))
+            name = prod.get("name", "Product")
+            price_usd_original = float(prod.get("price", 0))
 
-            name = prod.get(
-                "name",
-                "Product"
-            )
-
-            price_usd = float(
-                prod.get(
-                    "price",
-                    0
-                )
-            )
-
-            automatic_price = calculate_automatic_price(
-                price_usd
-            )
+            automatic_price = calculate_automatic_price(price_usd_original)
 
             if prod_id in manual_prices:
-
-                current_price = manual_prices[
-                    prod_id
-                ]
-
+                current_price = manual_prices[prod_id]
                 mode = "✏️ يدوي"
-
             else:
-
                 current_price = automatic_price
-
                 mode = "🔄 تلقائي"
 
             short_name = (
@@ -1392,10 +1307,7 @@ async def prices_back(
 
             keyboard.append([
                 InlineKeyboardButton(
-                    (
-                        f"📦 {short_name} | "
-                        f"{current_price} ج.م {mode}"
-                    ),
+                    f"📦 {short_name} | ${current_price:.2f} {mode}",
                     callback_data=f"manageprice_{prod_id}"
                 )
             ])
@@ -1638,9 +1550,8 @@ def main():
     )
 
     logger.info(
-        "Automatic pricing enabled: USD x %.2f x %.2f",
-        PROFIT_MARGIN,
-        USD_TO_EGP
+        "Automatic pricing enabled: USD x %.2f",
+        PROFIT_MARGIN
     )
 
     logger.info(
