@@ -22,7 +22,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
 )
 
-logger = logging.getLogger("fastmedia_bot")
+logger = logging.getLogger("nivo_bot")
 
 
 # ============================================================
@@ -266,7 +266,7 @@ async def start(
         if len(keyboard) > 1:
 
             await status_msg.edit_text(
-                "🛍️ *أهلاً بك في متجر Fastmedia Store*\n\n"
+                "🛍️ *أهلاً بك في متجر Nivo Store*\n\n"
                 "اختر المنتج المطلوب لعرض التفاصيل والمواصفات 👇",
                 reply_markup=InlineKeyboardMarkup(
                     keyboard
@@ -1634,7 +1634,7 @@ def main():
     )
 
     logger.info(
-        "Starting FastMedia bot..."
+        "Starting Nivo Store bot..."
     )
 
     logger.info(
